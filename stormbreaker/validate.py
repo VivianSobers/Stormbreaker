@@ -1,0 +1,250 @@
+"""Validation.
+
+Two checks, in increasing order of how much they prove.
+
+**Held-out target error** works any time, plugged in or not. Fit on the first
+part of the record, predict the package sensor on the last part. It shows the
+model generalises across time rather than memorising the window it was fitted
+on.
+
+**Discharge-curve tracking** is the real one, and the reason the project is
+worth building. Take an unplugged session, fit on its first half, then predict
+the second half's battery trajectory *without ever looking at it*, and compare
+against what the fuel gauge actually reported. The gauge's charge reading is an
+integral measurement, accumulated independently of every counter we regress on,
+so agreement is not something the fit can manufacture. If the predicted curve
+tracks the real one, the attribution is doing its job.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .model import Dataset, fit, predict
+from .report import SystemModel, fit_system_model
+
+
+@dataclass
+class Segment:
+    start: int
+    stop: int  # exclusive
+
+    def __len__(self) -> int:
+        return self.stop - self.start
+
+
+def find_discharge_segments(ds: Dataset, min_windows: int = 60) -> list[Segment]:
+    """Contiguous runs of unplugged windows with no sampling gap.
+
+    A gap (suspend, collector restart) breaks a segment: energy consumed while
+    we were not looking cannot be attributed, and silently bridging the gap
+    would make the model look wrong for a reason that is not its fault.
+    """
+    disch = ds.globals_["discharging"] > 0.5
+    charge = ds.globals_["charge"]
+    ts = ds.ts
+    dt = ds.globals_["dt"]
+
+    segs: list[Segment] = []
+    start = None
+    for i in range(len(disch)):
+        gap = i > 0 and (ts[i] - ts[i - 1]) > max(3.0 * dt[i], 15.0)
+        valid = disch[i] and np.isfinite(charge[i]) and charge[i] > 0
+        if valid and not gap:
+            if start is None:
+                start = i
+        else:
+            if start is not None and i - start >= min_windows:
+                segs.append(Segment(start, i))
+            start = i if valid else None
+    if start is not None and len(disch) - start >= min_windows:
+        segs.append(Segment(start, len(disch)))
+    return segs
+
+
+def _wh_from_charge(charge_uah: np.ndarray, volts: np.ndarray) -> np.ndarray:
+    """uAh at V volts -> Wh. The pack voltage sags over a discharge, so it is
+    tracked per window rather than assumed constant."""
+    volts = np.where(np.isfinite(volts) & (volts > 1.0), volts, np.nan)
+    if np.all(np.isnan(volts)):
+        raise ValueError("no pack voltage recorded; cannot convert charge to energy")
+    volts = np.nan_to_num(volts, nan=float(np.nanmean(volts)))
+    return charge_uah * volts / 1e6
+
+
+@dataclass
+class DischargeResult:
+    n_train: int
+    n_test: int
+    hours: float
+    predicted_wh: np.ndarray
+    measured_wh: np.ndarray
+    ts: np.ndarray
+    mae_wh: float
+    final_error_wh: float
+    final_error_pct: float
+    predicted_runtime_h: float
+    measured_runtime_h: float
+    sysmod: SystemModel
+
+
+def validate_discharge(
+    ds: Dataset,
+    charge_based: bool = True,
+    holdout: float = 0.5,
+    segment: Segment | None = None,
+) -> DischargeResult | None:
+    """Fit on the first part of an unplugged session, predict the rest."""
+    segs = find_discharge_segments(ds)
+    if not segs:
+        return None
+    seg = segment or max(segs, key=len)
+    cut = seg.start + max(int(len(seg) * (1 - holdout)), 30)
+    if cut >= seg.stop - 10:
+        return None
+
+    train = np.arange(seg.start, cut)
+    test = np.arange(cut, seg.stop)
+
+    sub_train = _subset(ds, train)
+    f = fit(sub_train)
+    sysmod = fit_system_model(sub_train)
+    if not sysmod.usable:
+        return None
+
+    sub_test = _subset(ds, test)
+    pkg_pred = predict(sub_test, f)
+    sys_pred = sysmod.intercept + sysmod.slope * pkg_pred
+
+    dt = ds.globals_["dt"][test]
+    volts = ds.globals_["volt_v"][test]
+    if charge_based:
+        measured = _wh_from_charge(ds.globals_["charge"][test], volts)
+    else:
+        measured = ds.globals_["charge"][test] / 1e6
+
+    # Integrate predicted draw forward from the true starting energy.
+    consumed = np.cumsum(sys_pred * dt / 3600.0)
+    predicted = measured[0] - consumed
+
+    err = predicted - measured
+    hours = float(dt.sum()) / 3600.0
+    mean_sys = float(np.mean(sys_pred))
+    measured_rate = (measured[0] - measured[-1]) / hours if hours > 0 else float("nan")
+
+    return DischargeResult(
+        n_train=len(train),
+        n_test=len(test),
+        hours=hours,
+        predicted_wh=predicted,
+        measured_wh=measured,
+        ts=ds.ts[test],
+        mae_wh=float(np.abs(err).mean()),
+        final_error_wh=float(err[-1]),
+        final_error_pct=float(
+            err[-1] / max(measured[0] - measured[-1], 1e-6) * 100.0
+        ),
+        predicted_runtime_h=float(measured[0] / mean_sys) if mean_sys > 0 else float("nan"),
+        measured_runtime_h=float(measured[0] / measured_rate)
+        if measured_rate > 0
+        else float("nan"),
+        sysmod=sysmod,
+    )
+
+
+def _subset(ds: Dataset, idx: np.ndarray) -> Dataset:
+    return Dataset(
+        X=ds.X[idx],
+        y=ds.y[idx],
+        columns=ds.columns,
+        ts=ds.ts[idx],
+        freq_edges=ds.freq_edges,
+        target=ds.target,
+        win_ids=[ds.win_ids[i] for i in idx],
+        globals_={k: v[idx] for k, v in ds.globals_.items()},
+    )
+
+
+@dataclass
+class HoldoutResult:
+    n_train: int
+    n_test: int
+    r2: float
+    mae: float
+    rmse: float
+    mean_measured: float
+    mean_predicted: float
+    naive_mae: float
+
+
+def validate_holdout(ds: Dataset, holdout: float = 0.3) -> HoldoutResult:
+    """Chronological train/test split on the package target."""
+    n = len(ds.y)
+    cut = max(int(n * (1 - holdout)), 20)
+    train, test = np.arange(cut), np.arange(cut, n)
+    if len(test) < 10:
+        raise ValueError("not enough windows for a hold-out split")
+
+    f = fit(_subset(ds, train))
+    sub_test = _subset(ds, test)
+    pred = predict(sub_test, f)
+    ok = np.isfinite(sub_test.y) & (sub_test.y > 0)
+    y, p = sub_test.y[ok], pred[ok]
+
+    resid = y - p
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    r2 = 1.0 - float(resid @ resid) / ss_tot if ss_tot > 0 else float("nan")
+    # A model that just predicts the training mean is the bar to clear.
+    naive = float(np.abs(y - ds.y[train][np.isfinite(ds.y[train])].mean()).mean())
+
+    return HoldoutResult(
+        n_train=cut,
+        n_test=int(ok.sum()),
+        r2=r2,
+        mae=float(np.abs(resid).mean()),
+        rmse=float(np.sqrt((resid @ resid) / len(y))),
+        mean_measured=float(y.mean()),
+        mean_predicted=float(p.mean()),
+        naive_mae=naive,
+    )
+
+
+def plot_discharge(res: DischargeResult, path: str) -> bool:
+    """Write the predicted-vs-measured discharge plot. Returns False if
+    matplotlib is not installed."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return False
+
+    mins = (res.ts - res.ts[0]) / 60.0
+    fig, ax = plt.subplots(figsize=(9, 5), dpi=140)
+    ax.plot(mins, res.measured_wh, label="measured (fuel gauge)", lw=2.2, color="#1b3a5c")
+    ax.plot(
+        mins,
+        res.predicted_wh,
+        label="predicted (attribution model)",
+        lw=2.0,
+        ls="--",
+        color="#c2410c",
+    )
+    ax.fill_between(
+        mins, res.measured_wh, res.predicted_wh, color="#c2410c", alpha=0.12
+    )
+    ax.set_xlabel("minutes since start of held-out segment")
+    ax.set_ylabel("battery energy remaining (Wh)")
+    ax.set_title(
+        f"Predicted vs measured discharge  —  "
+        f"MAE {res.mae_wh:.3f} Wh, final error {res.final_error_pct:+.1f}%"
+    )
+    ax.legend(loc="upper right", frameon=False)
+    ax.grid(alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return True
