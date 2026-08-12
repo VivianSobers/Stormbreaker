@@ -1,0 +1,24 @@
+[Unit]
+Description=Stormbreaker per-process battery attribution collector
+Documentation=https://github.com/vivian/stormbreaker
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/stormbreaker collect --window 5
+Restart=on-failure
+RestartSec=30
+
+# The collector reads /proc and /sys only. It needs no privileges unless you
+# want RAPL, which is root-only on kernels carrying the CVE-2020-8694
+# mitigation; the hwmon package sensor is used instead and measures the same
+# silicon. If you do want RAPL, run this as a system service and add:
+#   AmbientCapabilities=CAP_DAC_READ_SEARCH
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+
+# Keep the collector's own cost off the machine it is measuring.
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target
