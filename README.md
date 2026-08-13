@@ -113,6 +113,20 @@ stormbreaker coefs                       # inspect the learned coefficients
 stormbreaker validate --plot out.png     # check the model against reality
 ```
 
+By default each command fits a fresh model from the stored windows. To fit once
+and reuse it:
+
+```sh
+stormbreaker fit                         # fit and store the model
+stormbreaker top --saved                 # reuse it instead of refitting
+```
+
+A stored model is a vector of coefficients whose meaning is positional, and the
+set of running applications changes between runs, so `--saved` re-aligns the
+data onto the model's columns by name. Applications the model has never seen
+contribute zero and are reported as unattributed, rather than borrowing whatever
+coefficient happens to sit at their column index.
+
 For continuous collection, `packaging/stormbreaker.service` is a user unit:
 
 ```sh
