@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -425,6 +426,56 @@ def mean_watts(ds: Dataset, f: Fit) -> list[tuple[str, float]]:
     ranked = [(lab, float(v.mean())) for lab, v in attr.items()]
     ranked.sort(key=lambda kv: -kv[1])
     return ranked
+
+
+def save_fit(store: Store, f: Fit) -> None:
+    """Persist a fitted model alongside the data it was fitted on."""
+    store.set_meta("fit_json", f.to_json())
+    store.set_meta("fit_ts", str(time.time()))
+    store.commit()
+
+
+def load_fit(store: Store) -> tuple[Fit, float] | None:
+    """Return the stored model and its age in seconds, if one exists."""
+    blob = store.get_meta("fit_json")
+    if not blob:
+        return None
+    ts = float(store.get_meta("fit_ts") or 0.0)
+    return Fit.from_json(blob), time.time() - ts
+
+
+def align_to_fit(ds: Dataset, f: Fit) -> Dataset:
+    """Re-shape a dataset's design matrix onto a stored model's columns.
+
+    A saved model is only reusable if its columns still mean the same thing.
+    Applications come and go between runs, so the live dataset's column order
+    will not generally match the one the model was fitted with. Columns the
+    model does not know about are dropped rather than silently misaligned —
+    scoring a new application's activity against another application's
+    coefficient would be worse than not scoring it at all.
+    """
+    index = {col: j for j, col in enumerate(ds.columns)}
+    X = np.zeros((ds.X.shape[0], len(f.columns)))
+    for j, col in enumerate(f.columns):
+        src = index.get(tuple(col))
+        if src is not None:
+            X[:, j] = ds.X[:, src]
+    return Dataset(
+        X=X,
+        y=ds.y,
+        columns=list(f.columns),
+        ts=ds.ts,
+        freq_edges=ds.freq_edges,
+        target=ds.target,
+        win_ids=ds.win_ids,
+        globals_=ds.globals_,
+    )
+
+
+def unknown_labels(ds: Dataset, f: Fit) -> set[str]:
+    """Applications present in the data but absent from the stored model."""
+    known = {lab for lab, _ in f.columns}
+    return {lab for lab, _ in ds.columns if lab not in known}
 
 
 @dataclass
