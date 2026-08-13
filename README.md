@@ -7,14 +7,20 @@ percent:
 
 ```
     WATTS   SHARE     CPU     GPU   IO MB/s                APPLICATION
-    5.323   23.4%   1.094   0.000      0.00  ###.........  sb-beta
-    5.001   21.9%   1.224   0.000      0.00  ###.........  sb-alpha
-    1.798    7.9%   0.117   0.009      0.00  #...........  code
-    1.653    7.3%   0.154   0.005      0.08  #...........  google-chrome
-    1.639    7.2%   0.141   0.000      0.20  #...........  org.chromium.Chromium
-    0.962    4.2%   0.037   0.000      0.00  #...........  plasma-kwin_wayland
-    5.238   23.0%                            ###.........  [idle baseline — attributable to nobody]
+    6.142   25.2%   1.288   0.000      0.00  ###.........  sb-beta
+    5.493   22.5%   0.169   0.013      0.00  ###.........  code
+    5.432   22.3%   1.459   0.000      0.00  ###.........  sb-alpha
+    1.001    4.1%   0.247   0.000      0.35  ............  org.chromium.Chromium
+    0.304    1.2%   0.015   0.000      0.17  ............  other
+    5.832   23.9%                            ###.........  [idle baseline — attributable to nobody]
 ```
+
+(`sb-alpha` and `sb-beta` are synthetic loads pinned in their own cgroups, used
+to check that a workload of known size is recovered at the right rank.)
+
+Note what ranking by watts does that ranking by CPU cannot: `code` is third by
+CPU at 0.169 busy cores, yet second by power, because its GPU and context-switch
+activity cost more than its arithmetic does.
 
 ## Why this needs a model at all
 
@@ -157,11 +163,21 @@ no-unplugged-data path. Until it runs, the attribution is plausible but not
 demonstrated. Treat the numbers accordingly.
 
 What *has* been measured, on one machine (AMD Ryzen AI 7 350, Radeon 860M,
-Fedora, kernel 7.0.10), over 5.4 minutes and 159 windows:
+Fedora, kernel 7.0.10), over 4.3 minutes and 129 windows of scripted load:
 
-- R² 0.896, MAE 2.92 W, against package power ranging 5.24–48.85 W
-- Idle baseline 5.238 W, sitting exactly on its physical bound
+- **Held-out R² 0.553**, MAE 7.01 W against a predict-the-mean baseline of
+  12.27 W, training on the first 77 windows and testing on the last 52
+- In-sample R² 0.762, MAE 5.65 W, against package power ranging 5.8–52.7 W
+- Idle baseline 5.83 W, sitting on its physical bound
 - Collector cost **13 ms per snapshot** — 0.26% duty cycle at a 5 s window
+
+The held-out number is the one that means anything, and it is the one to
+distrust first. An earlier build reported in-sample R² 0.807 on this same data
+while scoring **−0.21** held out — worse than predicting the mean — because the
+default column budget fitted 186 parameters to 77 training windows. The budget
+is now sized from the data, which is what moved the held-out score to 0.553
+without collecting anything new. Any future change that improves the in-sample
+figure should be checked against the held-out one before being believed.
 
 Cross-check on the learned CPU cost: ~5.5 W per busy core × 8 cores + 5.24 W
 baseline ≈ 49 W, against a 48.85 W peak actually measured under an 8-thread
