@@ -12,6 +12,7 @@ from stormbreaker.model import (
     Dataset,
     _solve_bounded_ridge,
     attribute,
+    choose_budget,
     coefficient_table,
     fit,
     mean_watts,
@@ -273,6 +274,28 @@ def test_coefficient_table_works_without_a_dataset():
     rows = coefficient_table(fit(ds))
     assert rows
     assert all(r.activity_p95 != r.activity_p95 for r in rows)  # NaN
+
+
+def test_column_budget_scales_with_available_data():
+    """Guards the failure that made the defaults produce a model worse than
+    predicting the mean: 186 columns fitted on 77 training windows."""
+    small_top, small_buckets = choose_budget(120, None, None)
+    big_top, big_buckets = choose_budget(5000, None, None)
+
+    assert small_top < big_top
+    assert small_buckets <= big_buckets
+    assert small_buckets == 1  # no frequency resolution on a short recording
+
+    for n in (40, 120, 400, 2000):
+        top, buckets = choose_budget(n, None, None)
+        columns = (top + 1) * (buckets + 3)
+        assert columns <= max(n, 20), f"{n} windows would fit {columns} columns"
+
+
+def test_explicit_budget_is_honoured():
+    """An analyst asking for a specific shape gets it, data volume aside."""
+    assert choose_budget(50, 25, 3) == (25, 3)
+    assert choose_budget(9999, 4, 1) == (4, 1)
 
 
 def test_too_little_data_is_an_error_not_a_guess():
