@@ -427,13 +427,53 @@ def mean_watts(ds: Dataset, f: Fit) -> list[tuple[str, float]]:
     return ranked
 
 
-def coefficient_table(f: Fit) -> list[tuple[str, str, float]]:
-    """Non-zero coefficients, for inspection. Units depend on the feature:
-    W per busy core, W per MB/s, W per busy GPU-second/s, W per 1000 ctxt/s."""
-    rows = [
-        (lab, feat, float(f.coef[j]))
-        for j, (lab, feat) in enumerate(f.columns)
-        if f.coef[j] > 0
-    ]
-    rows.sort(key=lambda r: -r[2])
+@dataclass
+class CoefRow:
+    label: str
+    feature: str
+    coef: float  # watts per unit of activity
+    activity_p95: float  # the activity level it was identified at
+    watts_p95: float  # what it contributes at that activity
+    watts_mean: float  # what it contributes on average
+    extrapolated: bool  # identified far below one full unit
+
+
+def coefficient_table(f: Fit, ds: Dataset | None = None) -> list[CoefRow]:
+    """Non-zero coefficients with the activity each was identified at.
+
+    A coefficient is a cost *per unit* of activity — per busy core, per MB/s,
+    per busy GPU-second, per 1000 context switches. Read alone it invites a
+    category error: a coefficient of 130 W per fully-busy-GPU-second looks
+    impossible on a 45 W package until you notice it was only ever evaluated at
+    a hundredth of a busy GPU, contributing 1.3 W.
+
+    So the activity level travels with the number. Rows identified far below
+    one full unit are marked as extrapolated, meaning the rate is real but the
+    machine was never observed anywhere near that regime.
+    """
+    rows: list[CoefRow] = []
+    for j, (lab, feat) in enumerate(f.columns):
+        coef = float(f.coef[j])
+        if coef <= 0:
+            continue
+        if ds is not None and j < ds.X.shape[1]:
+            p95 = float(np.percentile(ds.X[:, j], 95))
+            mean = float(ds.X[:, j].mean())
+        else:
+            p95 = mean = float("nan")
+        kind = feature_kind(feat)
+        rows.append(
+            CoefRow(
+                label=lab,
+                feature=feat,
+                coef=coef,
+                activity_p95=p95,
+                watts_p95=coef * p95,
+                watts_mean=coef * mean,
+                extrapolated=bool(kind in ("cpu", "gpu") and p95 == p95 and p95 < 0.1),
+            )
+        )
+    # Ranked by what each actually contributes, not by the raw rate, so the
+    # table cannot be read as "this daemon costs 130 W".
+    rows.sort(key=lambda r: -(r.watts_mean if r.watts_mean == r.watts_mean else 0.0))
     return rows

@@ -90,14 +90,28 @@ def cmd_coefs(args) -> int:
         edges = ", ".join(f"{e:.2f}" for e in f.freq_edges)
         print(f"frequency bucket edges (GHz): {edges}")
     print(f"idle baseline: {f.baseline:.3f} W\n")
-    print(f"  {'COEFFICIENT':>12}  {'FEATURE':<10}  APPLICATION")
-    for lab, feat, val in coefficient_table(f)[: args.number]:
-        print(f"  {val:12.4f}  {feat:<10}  {lab}")
+    print(
+        f"  {'COEF':>10}  {'ACT p95':>9}  {'W @ p95':>8}  {'W avg':>7}  "
+        f"{'FEATURE':<9}  APPLICATION"
+    )
+    rows = coefficient_table(f, ds)[: args.number]
+    for r in rows:
+        mark = " *" if r.extrapolated else "  "
+        print(
+            f"  {r.coef:10.3f}  {r.activity_p95:9.4f}  {r.watts_p95:8.3f}  "
+            f"{r.watts_mean:7.3f}  {r.feature:<9}{mark} {r.label}"
+        )
     print(
         "\nunits: cpu@N = W per busy core in frequency bucket N, "
         "io_mb = W per MB/s,\n       gpu = W per busy GPU-second/s, "
         "ctxt_k = W per 1000 context switches/s"
     )
+    if any(r.extrapolated for r in rows):
+        print(
+            "\n  * identified below a tenth of one full unit. The rate is real but "
+            "the\n    machine was never observed near that regime — read 'W avg', "
+            "not 'COEF'."
+        )
     return 0
 
 

@@ -12,6 +12,7 @@ from stormbreaker.model import (
     Dataset,
     _solve_bounded_ridge,
     attribute,
+    coefficient_table,
     fit,
     mean_watts,
     predict,
@@ -229,6 +230,49 @@ def test_near_idle_column_cannot_absorb_watts():
     assert by_label["busy"] == pytest.approx(5.0, rel=0.1)
     ranked = dict(mean_watts(ds, f))
     assert ranked.get("ghost", 0.0) == 0.0
+
+
+def test_coefficient_table_reports_identifying_activity():
+    """A high per-unit rate on a barely-exercised feature must be flagged, and
+    the table must rank by actual contribution rather than by the raw rate —
+    otherwise it reads as "this process costs 60 W"."""
+    rng = np.random.default_rng(17)
+    n = 500
+    cpu = rng.random(n) * 2.0  # routinely ~1 busy core
+    gpu = rng.random(n) * 0.02  # never near a busy GPU
+    y = 3.0 + 5.0 * cpu + 60.0 * gpu + rng.normal(0, 0.05, n)
+
+    ds = Dataset(
+        X=np.column_stack([cpu, gpu]),
+        y=y,
+        columns=[("worker", "cpu"), ("compositor", "gpu")],
+        ts=np.arange(n, dtype=float),
+        freq_edges=[],
+        target="soc_w",
+        win_ids=list(range(n)),
+        globals_={"dt": np.full(n, 5.0), "discharging": np.zeros(n)},
+    )
+    rows = coefficient_table(fit(ds), ds)
+    by_feature = {r.feature: r for r in rows}
+
+    gpu_row = by_feature["gpu"]
+    assert gpu_row.coef > 10.0  # a large per-unit rate...
+    assert gpu_row.watts_mean < 1.5  # ...that contributes very little
+    assert gpu_row.extrapolated
+
+    cpu_row = by_feature["cpu"]
+    assert not cpu_row.extrapolated
+    assert cpu_row.watts_mean == pytest.approx(cpu_row.coef * cpu.mean(), rel=1e-9)
+
+    # ranked by contribution, so the big rate does not lead the table
+    assert rows[0].feature == "cpu"
+
+
+def test_coefficient_table_works_without_a_dataset():
+    ds, _t, _b = make_dataset()
+    rows = coefficient_table(fit(ds))
+    assert rows
+    assert all(r.activity_p95 != r.activity_p95 for r in rows)  # NaN
 
 
 def test_too_little_data_is_an_error_not_a_guess():
