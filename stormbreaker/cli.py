@@ -9,7 +9,15 @@ import time
 from . import __version__
 from .caps import probe
 from .collect import run_collect
-from .model import coefficient_table, fit, load_dataset
+from .model import (
+    align_to_fit,
+    coefficient_table,
+    fit,
+    load_dataset,
+    load_fit,
+    save_fit,
+    unknown_labels,
+)
 from .report import load_and_report, render_daily, render_top
 from .store import DEFAULT_DB, Store
 from .validate import plot_discharge, validate_discharge, validate_holdout
@@ -38,6 +46,53 @@ def _load(args, min_minutes: float | None = None):
     return store, ds
 
 
+def _fit_for(args, store, ds):
+    """Either reuse the stored model or fit a fresh one.
+
+    Reusing returns the dataset re-aligned onto the stored model's columns, so
+    the caller must use the dataset this hands back rather than the one it
+    passed in.
+    """
+    if not getattr(args, "saved", False):
+        return ds, fit(ds, lam=args.lam)
+
+    hit = load_fit(store)
+    if hit is None:
+        print(
+            "No stored model. Run `stormbreaker fit` first, or drop --saved to "
+            "fit on the fly.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    f, age = hit
+    missing = unknown_labels(ds, f)
+    if missing:
+        shown = ", ".join(sorted(missing)[:4])
+        print(
+            f"note: {len(missing)} application(s) started since the model was "
+            f"fitted and are\n      not attributed: {shown}"
+            f"{' ...' if len(missing) > 4 else ''}. Re-run `stormbreaker fit` "
+            "to include them.",
+            file=sys.stderr,
+        )
+    print(f"using stored model, fitted {age/3600:.1f} h ago", file=sys.stderr)
+    return align_to_fit(ds, f), f
+
+
+def cmd_fit(args) -> int:
+    store, ds = _load(args)
+    f = fit(ds, lam=args.lam)
+    save_fit(store, f)
+    print(
+        f"fitted {f.n_windows} windows against {f.target}: "
+        f"R^2={f.r2:.4f}, MAE={f.mae:.3f} W, lambda={f.lam:g}"
+    )
+    print(f"idle baseline {f.baseline:.3f} W over {len(f.labels)} applications")
+    print(f"saved to {args.db}")
+    return 0
+
+
 def cmd_caps(args) -> int:
     caps = probe()
     print("stormbreaker capability probe")
@@ -62,7 +117,7 @@ def cmd_collect(args) -> int:
 
 def cmd_top(args) -> int:
     store, ds = _load(args)
-    f = fit(ds, lam=args.lam)
+    ds, f = _fit_for(args, store, ds)
     rows, ctx, sysmod = load_and_report(store, ds, f)
     print()
     print(render_top(rows, ctx, f, sysmod, args.number))
@@ -72,7 +127,7 @@ def cmd_top(args) -> int:
 
 def cmd_report(args) -> int:
     store, ds = _load(args)
-    f = fit(ds, lam=args.lam)
+    ds, f = _fit_for(args, store, ds)
     rows, ctx, sysmod = load_and_report(store, ds, f)
     print("\nStormbreaker battery report")
     print("=" * 60)
@@ -82,8 +137,8 @@ def cmd_report(args) -> int:
 
 
 def cmd_coefs(args) -> int:
-    _store, ds = _load(args)
-    f = fit(ds, lam=args.lam)
+    store, ds = _load(args)
+    ds, f = _fit_for(args, store, ds)
     print(f"\nfitted on {f.n_windows} windows, target={f.target}, lambda={f.lam:g}")
     print(f"R^2={f.r2:.4f}  MAE={f.mae:.3f} W  RMSE={f.rmse:.3f} W")
     if f.freq_edges:
@@ -209,18 +264,29 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--target", default=None,
                         help="energy column to regress on (soc_w | rapl_pkg_w)")
 
+    def add_saved_arg(sp):
+        sp.add_argument("--saved", action="store_true",
+                        help="reuse the model stored by `stormbreaker fit`")
+
+    sp = sub.add_parser("fit", help="fit a model and store it in the database")
+    add_model_args(sp)
+    sp.set_defaults(func=cmd_fit)
+
     sp = sub.add_parser("top", help="rank applications by watts")
     add_model_args(sp)
+    add_saved_arg(sp)
     sp.add_argument("-n", "--number", type=int, default=15)
     sp.set_defaults(func=cmd_top)
 
     sp = sub.add_parser("report", help="battery report in minutes of life")
     add_model_args(sp)
+    add_saved_arg(sp)
     sp.add_argument("-n", "--number", type=int, default=3)
     sp.set_defaults(func=cmd_report)
 
     sp = sub.add_parser("coefs", help="show the learned coefficients")
     add_model_args(sp)
+    add_saved_arg(sp)
     sp.add_argument("-n", "--number", type=int, default=25)
     sp.set_defaults(func=cmd_coefs)
 
