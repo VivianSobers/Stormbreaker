@@ -40,8 +40,8 @@ def _load(args, min_minutes: float | None = None):
         store,
         since=_since(getattr(args, "minutes", None)),
         target=getattr(args, "target", None),
-        top_n=getattr(args, "top_n", 30),
-        n_buckets=getattr(args, "buckets", 3),
+        top_n=getattr(args, "top_n", None),
+        n_buckets=getattr(args, "buckets", None),
     )
     return store, ds
 
@@ -257,10 +257,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="only use the last N minutes of data")
         sp.add_argument("--lam", type=float, default=None,
                         help="ridge strength (default: chosen by hold-out)")
-        sp.add_argument("--top-n", type=int, default=30, dest="top_n",
-                        help="how many cgroups get their own columns")
-        sp.add_argument("--buckets", type=int, default=3,
-                        help="CPU frequency buckets")
+        sp.add_argument("--top-n", type=int, default=None, dest="top_n",
+                        help="how many cgroups get their own columns "
+                             "(default: sized to the data)")
+        sp.add_argument("--buckets", type=int, default=None,
+                        help="CPU frequency buckets (default: sized to the data)")
         sp.add_argument("--target", default=None,
                         help="energy column to regress on (soc_w | rapl_pkg_w)")
 
