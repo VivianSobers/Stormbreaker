@@ -292,3 +292,28 @@ def test_charge_to_energy_needs_a_voltage():
 
     with pytest.raises(ValueError, match="no pack voltage"):
         _wh_from_charge(np.array([3_200_000.0]), np.array([np.nan]))
+
+
+def test_gauge_plateau_is_trimmed():
+    """A pack unplugged at full pins its gauge at the maximum for minutes, then
+    catches up in one jump. Scoring across that boundary compares the model
+    against an instrument that was not yet reporting."""
+    from stormbreaker.validate import Segment, trim_gauge_plateau
+
+    n = 100
+    charge = np.concatenate([np.full(30, 3_214_000.0),
+                             np.linspace(3_213_000, 3_150_000, 70)])
+    ds = _charge_ds([1] * n, charge)
+    trimmed = trim_gauge_plateau(ds, Segment(0, n))
+    assert trimmed.start == 30
+    assert trimmed.stop == n
+
+
+def test_trimming_a_moving_gauge_changes_nothing():
+    from stormbreaker.validate import Segment, trim_gauge_plateau
+
+    n = 50
+    ds = _charge_ds([1] * n, np.linspace(3_200_000, 3_150_000, n))
+    trimmed = trim_gauge_plateau(ds, Segment(0, n))
+    assert trimmed.start == 1  # only the first reading itself
+    assert len(trimmed) >= n - 1

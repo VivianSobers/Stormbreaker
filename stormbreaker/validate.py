@@ -105,6 +105,24 @@ class DischargeResult:
     sysmod: SystemModel
 
 
+def trim_gauge_plateau(ds: Dataset, seg: Segment) -> Segment:
+    """Drop the leading windows where the fuel gauge has not started moving.
+
+    A pack unplugged at full sits pinned at its maximum reading for minutes,
+    then catches up in one jump. Total energy over a long segment still comes
+    out right, but *within* the segment the reported rate is badly distorted —
+    measured here as a held-out span appearing to drain at 25 W while the
+    current sensor read 12.5 W. Fitting or scoring across that boundary
+    compares a model against an instrument that was not yet reporting.
+    """
+    charge = ds.globals_["charge"]
+    start = seg.start
+    first = charge[start]
+    while start < seg.stop - 1 and charge[start] >= first:
+        start += 1
+    return Segment(start, seg.stop)
+
+
 MIN_GAUGE_STEPS = 4
 """Distinct fuel-gauge readings needed across the held-out span.
 
@@ -151,6 +169,9 @@ def validate_discharge(
     if not segs:
         return None
     seg = segment or max(segs, key=len)
+    seg = trim_gauge_plateau(ds, seg)
+    if len(seg) < 40:
+        return None
     if len(np.unique(ds.globals_["charge"][seg.start : seg.stop])) < MIN_GAUGE_STEPS:
         return None
     cut = seg.start + max(int(len(seg) * (1 - holdout)), 30)
