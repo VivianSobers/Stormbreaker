@@ -13,7 +13,10 @@ import signal
 import sys
 import time
 
+import numpy as np
+
 from .caps import Caps, probe
+from .model import fit, load_dataset, save_fit
 from .sources import Sampler, SubSample
 from .store import DEFAULT_DB, Store
 
@@ -26,14 +29,37 @@ class Collector:
         subsample_s: float = 0.5,
         gpu_fdinfo: bool = True,
         caps: Caps | None = None,
+        refit_every_s: float = 600.0,
+        rolling_hours: float = 4.0,
     ):
         self.caps = caps or probe()
         self.sampler = Sampler(self.caps, gpu_fdinfo=gpu_fdinfo)
         self.store = Store(db_path)
         self.window_s = window_s
         self.subsample_s = min(subsample_s, window_s / 2)
+        self.refit_every_s = refit_every_s
+        self.rolling_hours = rolling_hours
         self._stop = False
         self._record_caps()
+
+    def refit(self) -> str | None:
+        """Refit the stored model over the trailing window and save it.
+
+        Deliberately swallows its own failures. A model that cannot be fitted
+        yet — too few windows, an energy sensor that went away — is a reason to
+        keep the old one and carry on collecting, never a reason to lose the
+        sampling run. Collection is the irreplaceable part; a fit can always be
+        recomputed from the data afterwards.
+        """
+        try:
+            ds = load_dataset(
+                self.store, since=time.time() - self.rolling_hours * 3600.0
+            )
+            f = fit(ds)
+            save_fit(self.store, f)
+            return f"refit on {f.n_windows} windows: R^2={f.r2:.3f} MAE={f.mae:.2f} W"
+        except (ValueError, np.linalg.LinAlgError) as e:
+            return f"refit skipped: {e}"
 
     def _record_caps(self) -> None:
         s = self.store
@@ -68,6 +94,7 @@ class Collector:
         prev = self.sampler.snapshot()
         n = 0
         commit_every = max(int(30.0 / self.window_s), 1)
+        last_refit = time.monotonic()
 
         while not self._stop:
             if duration_s is not None and time.monotonic() - started >= duration_s:
@@ -93,6 +120,20 @@ class Collector:
             if n % commit_every == 0:
                 self.store.commit()
 
+            if (
+                self.refit_every_s
+                and time.monotonic() - last_refit >= self.refit_every_s
+            ):
+                self.store.commit()
+                t_fit = time.monotonic()
+                msg = self.refit()
+                last_refit = time.monotonic()
+                if verbose and msg:
+                    print(
+                        f"       {msg} ({(last_refit - t_fit)*1e3:.0f} ms)",
+                        flush=True,
+                    )
+
             if verbose:
                 target = g.get("rapl_package-0_w") or g.get("soc_w") or 0.0
                 top = sorted(feats.items(), key=lambda kv: -kv[1]["cpu"])[:3]
@@ -114,6 +155,8 @@ def run_collect(
     duration_s: float | None,
     verbose: bool,
     gpu_fdinfo: bool = True,
+    refit_every_s: float = 600.0,
+    rolling_hours: float = 4.0,
 ) -> int:
     caps = probe()
     if caps.energy_target() == "none":
@@ -124,7 +167,14 @@ def run_collect(
             file=sys.stderr,
         )
         return 1
-    c = Collector(db_path, window_s=window_s, gpu_fdinfo=gpu_fdinfo, caps=caps)
+    c = Collector(
+        db_path,
+        window_s=window_s,
+        gpu_fdinfo=gpu_fdinfo,
+        caps=caps,
+        refit_every_s=refit_every_s,
+        rolling_hours=rolling_hours,
+    )
     print(f"stormbreaker collecting -> {db_path}")
     print(caps.describe())
     if not caps.rapl:

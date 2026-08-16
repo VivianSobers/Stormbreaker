@@ -112,6 +112,8 @@ def cmd_collect(args) -> int:
         duration_s=args.duration,
         verbose=args.verbose,
         gpu_fdinfo=not args.no_gpu,
+        refit_every_s=args.refit_every,
+        rolling_hours=args.rolling_hours,
     )
 
 
@@ -249,6 +251,10 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--window", type=float, default=5.0, help="window length, seconds")
     sp.add_argument("--duration", type=float, default=None, help="stop after N seconds")
     sp.add_argument("--no-gpu", action="store_true", help="skip per-process GPU scan")
+    sp.add_argument("--refit-every", type=float, default=600.0, dest="refit_every",
+                    help="seconds between background refits (0 disables)")
+    sp.add_argument("--rolling-hours", type=float, default=4.0, dest="rolling_hours",
+                    help="trailing window the background refit uses")
     sp.add_argument("-v", "--verbose", action="store_true")
     sp.set_defaults(func=cmd_collect)
 
