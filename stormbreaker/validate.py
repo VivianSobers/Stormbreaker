@@ -41,16 +41,31 @@ def find_discharge_segments(ds: Dataset, min_windows: int = 60) -> list[Segment]
     A gap (suspend, collector restart) breaks a segment: energy consumed while
     we were not looking cannot be attributed, and silently bridging the gap
     would make the model look wrong for a reason that is not its fault.
+
+    A **power profile change** breaks a segment for the same reason. Switching
+    between performance and power-saver rewrites the machine's cost structure,
+    so coefficients fitted before the switch do not describe the windows after
+    it. Training across that boundary produces a model that describes neither
+    regime while appearing to fit both.
     """
     disch = ds.globals_["discharging"] > 0.5
     charge = ds.globals_["charge"]
     ts = ds.ts
     dt = ds.globals_["dt"]
+    profiles = ds.profiles
 
     segs: list[Segment] = []
     start = None
     for i in range(len(disch)):
         gap = i > 0 and (ts[i] - ts[i - 1]) > max(3.0 * dt[i], 15.0)
+        if (
+            i > 0
+            and profiles is not None
+            and profiles[i]
+            and profiles[i - 1]
+            and profiles[i] != profiles[i - 1]
+        ):
+            gap = True
         valid = disch[i] and np.isfinite(charge[i]) and charge[i] > 0
         if valid and not gap:
             if start is None:
@@ -240,6 +255,7 @@ def _subset(ds: Dataset, idx: np.ndarray) -> Dataset:
         target=ds.target,
         win_ids=[ds.win_ids[i] for i in idx],
         globals_={k: v[idx] for k, v in ds.globals_.items()},
+        profiles=None if ds.profiles is None else ds.profiles[idx],
     )
 
 

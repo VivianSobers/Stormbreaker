@@ -118,6 +118,10 @@ class Dataset:
     target: str
     win_ids: list[int]
     globals_: dict[str, np.ndarray]
+    profiles: np.ndarray | None = None
+    """Per-window power regime, as an opaque string. Coefficients fitted under
+    one regime do not describe another, so this is carried alongside rather
+    than folded into the numeric globals."""
 
 
 def _bucket_edges(freq: np.ndarray, n_buckets: int) -> list[float]:
@@ -139,6 +143,40 @@ def _bucket_of(freq: float, edges: list[float]) -> int:
         if freq < e:
             return i
     return len(edges)
+
+
+def profile_mix(ds: Dataset) -> dict[str, int]:
+    """Window counts per power regime present in a dataset."""
+    if ds.profiles is None:
+        return {}
+    out: dict[str, int] = {}
+    for p in ds.profiles:
+        if p:
+            out[p] = out.get(p, 0) + 1
+    return out
+
+
+def dominant_profile(ds: Dataset) -> str | None:
+    mix = profile_mix(ds)
+    return max(mix, key=mix.get) if mix else None
+
+
+def filter_to_profile(ds: Dataset, profile: str) -> Dataset:
+    """Restrict a dataset to a single power regime."""
+    if ds.profiles is None:
+        return ds
+    keep = np.array([p == profile for p in ds.profiles])
+    return Dataset(
+        X=ds.X[keep],
+        y=ds.y[keep],
+        columns=ds.columns,
+        ts=ds.ts[keep],
+        freq_edges=ds.freq_edges,
+        target=ds.target,
+        win_ids=[w for w, k in zip(ds.win_ids, keep) if k],
+        globals_={k: v[keep] for k, v in ds.globals_.items()},
+        profiles=ds.profiles[keep],
+    )
 
 
 def choose_budget(
@@ -246,6 +284,10 @@ def load_dataset(
         )
     }
     globals_["discharging"] = np.array([r["discharging"] or 0 for r in rows], float)
+    profiles = np.array(
+        [(r["profile"] if "profile" in r.keys() and r["profile"] else "") for r in rows],
+        dtype=object,
+    )
 
     return Dataset(
         X=X,
@@ -256,6 +298,7 @@ def load_dataset(
         target=target,
         win_ids=win_ids,
         globals_=globals_,
+        profiles=profiles,
     )
 
 
