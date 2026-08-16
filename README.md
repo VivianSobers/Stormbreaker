@@ -86,8 +86,15 @@ exactly once:
 
 Package temperature (`k10temp`/`coretemp`) is recorded per window but is not yet
 a model feature. Silicon leakage rises with temperature, so it is a candidate
-explanation for residual error; it is being collected so the question can be
-settled with data rather than asserted.
+explanation for residual error.
+
+A first attempt to test that was **confounded and is not evidence**. On an idle
+recording the fitted model explained 0.4% of variance, so the residual was
+essentially the signal itself (`corr(y, residual) = 0.987`) and duly correlated
+with temperature at 0.85 — exactly as it would with any quantity that tracks
+power. Settling the question needs a recording where the model actually works,
+so that "what is left over" means something. Noted here because the confounded
+version looks persuasive.
 
 Frequency bucketing matters because the energy cost of a busy core is strongly
 superlinear in clock: a core-second at 5 GHz and one at 1.2 GHz are different
