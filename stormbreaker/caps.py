@@ -69,6 +69,15 @@ class Caps:
     has_avg_freq: bool = False
     has_time_in_state: bool = False
     gpu_busy_path: str | None = None
+    profile_paths: list[str] = field(default_factory=list)
+    """Files whose combined value identifies the current power regime.
+
+    A power profile change rewrites the machine's cost structure: the same
+    workload draws different power under 'performance' than under
+    'power-saver'. Coefficients fitted under one do not describe the other, so
+    the regime is recorded per window and treated as a hard boundary.
+    """
+
     temp_path: str | None = None
     temp_label: str | None = None
     drm_fdinfo: bool = False
@@ -118,6 +127,11 @@ class Caps:
         lines.append(
             f"  package temp:    {self.temp_path or 'unavailable'}"
             + (f" ({self.temp_label})" if self.temp_label else "")
+        )
+        lines.append(
+            f"  power profile:   "
+            + (", ".join(os.path.basename(p) for p in self.profile_paths)
+               if self.profile_paths else "unavailable")
         )
         lines.append(f"  per-proc gpu:    {'drm fdinfo' if self.drm_fdinfo else 'unavailable'}")
         lines.append(f"  energy target:   {self.energy_target()}")
@@ -211,6 +225,21 @@ def _probe_temp() -> tuple[str | None, str | None]:
     return (best[1], best[2]) if best else (None, None)
 
 
+def _probe_profile_paths() -> list[str]:
+    """Knobs that together define the current power regime.
+
+    Read as opaque strings and compared for equality — the point is only to
+    notice that the regime *changed*, not to interpret what it means. Each read
+    costs ~5 us, so all of them together are far below the sampling noise.
+    """
+    candidates = [
+        "/sys/firmware/acpi/platform_profile",
+        "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference",
+        "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
+    ]
+    return [p for p in candidates if _readable(p)]
+
+
 def _probe_gpu_busy() -> str | None:
     for p in sorted(glob.glob("/sys/class/drm/card*/device/gpu_busy_percent")):
         if _readable(p):
@@ -272,5 +301,6 @@ def probe() -> Caps:
 
     c.gpu_busy_path = _probe_gpu_busy()
     c.temp_path, c.temp_label = _probe_temp()
+    c.profile_paths = _probe_profile_paths()
     c.drm_fdinfo = _probe_drm_fdinfo()
     return c
