@@ -391,7 +391,17 @@ def fit(
     kinds_a = [k for k, keep in zip(kinds_full, active) if keep]
     cols_a = [c for c, keep in zip([("", "baseline"), *ds.columns], active) if keep]
 
-    lams = [lam] if lam is not None else [0.0, 0.01, 0.1, 1.0, 10.0, 100.0]
+    # Never search lambda = 0. A service that runs constantly — a portal, a
+    # compositor, an indexer — has an activity column that barely moves, and is
+    # therefore collinear with the intercept. Unregularised, the split between
+    # the two is arbitrary, and the solver will happily hand a daemon the
+    # machine's entire idle draw: observed here as a desktop portal credited
+    # with 5.35 W on 0.045 busy cores while the baseline sat at 0.
+    #
+    # Any strictly positive penalty breaks the tie correctly and permanently,
+    # because the baseline is unpenalised: constant draw is strictly cheaper to
+    # explain with the intercept than with any application column.
+    lams = [lam] if lam is not None else [1e-3, 0.01, 0.1, 1.0, 10.0, 100.0]
     cut = max(int(len(y_all) * (1 - holdout)), 10)
     best, best_score = None, float("inf")
 
