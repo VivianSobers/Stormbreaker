@@ -276,6 +276,46 @@ def test_coefficient_table_works_without_a_dataset():
     assert all(r.activity_p95 != r.activity_p95 for r in rows)  # NaN
 
 
+def test_constant_daemon_does_not_absorb_the_idle_baseline():
+    """A service whose activity never varies is collinear with the intercept.
+
+    Regression test for a real failure on an idle machine: a desktop portal
+    running at 0.045 busy cores was credited with 5.35 W — 57% of the machine —
+    while the fitted baseline sat at 0. The split is arbitrary without
+    regularisation, so the unpenalised intercept must be made strictly cheaper.
+    """
+    rng = np.random.default_rng(23)
+    n = 400
+    daemon = np.full(n, 0.05) + rng.normal(0, 1e-4, n)  # always on, never varies
+    worker = rng.random(n) * 1.2  # genuinely variable
+    baseline = 5.0
+    y = baseline + 3.0 * worker + rng.normal(0, 0.02, n)  # daemon costs nothing
+
+    ds = Dataset(
+        X=np.column_stack([daemon, worker]),
+        y=y,
+        columns=[("daemon", "cpu"), ("worker", "cpu")],
+        ts=np.arange(n, dtype=float),
+        freq_edges=[],
+        target="soc_w",
+        win_ids=list(range(n)),
+        globals_={"dt": np.full(n, 5.0), "discharging": np.zeros(n)},
+    )
+    f = fit(ds)
+    ranked = dict(mean_watts(ds, f))
+
+    assert f.baseline == pytest.approx(baseline, abs=0.4)
+    assert ranked.get("daemon", 0.0) < 0.5
+    assert ranked["worker"] > ranked.get("daemon", 0.0)
+
+
+def test_lambda_search_never_selects_zero():
+    """Zero penalty leaves intercept-collinear columns unidentified, so it is
+    excluded from the search entirely rather than merely disfavoured."""
+    ds, _t, _b = make_dataset()
+    assert fit(ds).lam > 0.0
+
+
 def test_column_budget_scales_with_available_data():
     """Guards the failure that made the defaults produce a model worse than
     predicting the mean: 186 columns fitted on 77 training windows."""
