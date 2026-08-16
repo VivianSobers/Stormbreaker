@@ -27,6 +27,16 @@ def _since(minutes: float | None) -> float | None:
     return None if minutes is None else time.time() - minutes * 60.0
 
 
+def _reload(store, args):
+    return load_dataset(
+        store,
+        since=_since(getattr(args, "minutes", None)),
+        target=getattr(args, "target", None),
+        top_n=getattr(args, "top_n", None),
+        n_buckets=getattr(args, "buckets", None),
+    )
+
+
 def _load(args, min_minutes: float | None = None):
     store = Store(args.db)
     if store.window_count() == 0:
@@ -36,14 +46,7 @@ def _load(args, min_minutes: float | None = None):
             file=sys.stderr,
         )
         raise SystemExit(2)
-    ds = load_dataset(
-        store,
-        since=_since(getattr(args, "minutes", None)),
-        target=getattr(args, "target", None),
-        top_n=getattr(args, "top_n", None),
-        n_buckets=getattr(args, "buckets", None),
-    )
-    return store, ds
+    return store, _reload(store, args)
 
 
 def _fit_for(args, store, ds):
@@ -119,12 +122,36 @@ def cmd_collect(args) -> int:
 
 def cmd_top(args) -> int:
     store, ds = _load(args)
-    ds, f = _fit_for(args, store, ds)
-    rows, ctx, sysmod = load_and_report(store, ds, f)
-    print()
-    print(render_top(rows, ctx, f, sysmod, args.number))
-    print()
-    return 0
+    if not args.watch:
+        ds, f = _fit_for(args, store, ds)
+        rows, ctx, sysmod = load_and_report(store, ds, f)
+        print()
+        print(render_top(rows, ctx, f, sysmod, args.number))
+        print()
+        return 0
+
+    # Watch mode refits at most once per --refit-watch seconds. Refitting every
+    # frame would make the tool a heavier consumer than most of what it ranks,
+    # which for a battery tool would be self-defeating.
+    cached: tuple = ()
+    last_fit = 0.0
+    try:
+        while True:
+            ds = _reload(store, args)
+            now = time.monotonic()
+            if not cached or now - last_fit >= args.refit_watch:
+                cached = _fit_for(args, store, ds)
+                last_fit = now
+            _ds, f = cached
+            rows, ctx, sysmod = load_and_report(store, _reload(store, args), f)
+            stamp = time.strftime("%H:%M:%S")
+            print("\033[2J\033[H", end="")
+            print(f"  stormbreaker top — {stamp}   (ctrl-c to exit)")
+            print(render_top(rows, ctx, f, sysmod, args.number))
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print()
+        return 0
 
 
 def cmd_report(args) -> int:
@@ -283,6 +310,12 @@ def main(argv: list[str] | None = None) -> int:
     add_model_args(sp)
     add_saved_arg(sp)
     sp.add_argument("-n", "--number", type=int, default=15)
+    sp.add_argument("-w", "--watch", action="store_true",
+                    help="refresh continuously instead of printing once")
+    sp.add_argument("--interval", type=float, default=3.0,
+                    help="seconds between refreshes in watch mode")
+    sp.add_argument("--refit-watch", type=float, default=60.0, dest="refit_watch",
+                    help="seconds between refits in watch mode")
     sp.set_defaults(func=cmd_top)
 
     sp = sub.add_parser("report", help="battery report in minutes of life")
