@@ -261,6 +261,40 @@ recovered as the top two consumers.
 
 Five minutes is a small sample and one machine is one machine.
 
+## Power profiles are separate machines
+
+Coefficients are per-machine *and per-power-profile*. Switching between
+performance and power-saver rewrites the cost structure, so a recording that
+spans a change describes neither regime. Stormbreaker records the profile every
+window (`platform_profile`, `energy_performance_preference`, `scaling_governor`),
+treats a change as a hard boundary in the same way it treats a sampling gap, and
+fits inside the dominant regime unless told otherwise.
+
+The cost of not doing this, measured on a synthetic machine whose two regimes
+were built to differ by design:
+
+| fit | baseline | W per busy core | R^2 |
+|---|---|---|---|
+| performance only | 3.03 W | **5.96** | 0.9996 |
+| power-saver only | 1.96 W | **2.51** | 0.9974 |
+| both together | 1.96 W | **2.42** | **-0.15** |
+| *ground truth* | *3.0 / 2.0 W* | *6.0 / 2.5* | |
+
+Each regime is recovered almost exactly on its own. Blended, the fit collapses
+onto roughly the power-saver answer and applies it everywhere — telling someone
+running at full performance that an application costs 2.4 W when it costs 6.0 W.
+The blended R^2 is negative, so the damage is at least detectable, but nothing
+about the reported watts looks wrong.
+
+This matters in ordinary use, not just in contrived tests: most desktops switch
+profile automatically when the mains is unplugged, which is exactly when battery
+attribution is interesting.
+
+```sh
+stormbreaker top                    # dominant profile, and says which
+stormbreaker top --profile all      # blend anyway, with a warning
+```
+
 ## What the model cannot separate
 
 Attribution is identifiable only where activity *varies*. A service that runs
