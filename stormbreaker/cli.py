@@ -22,6 +22,7 @@ from .model import (
     unknown_labels,
 )
 from .report import load_and_report, render_daily, render_top
+from .selftest import render as render_selftest, run_selftest
 from .store import DEFAULT_DB, Store
 from .validate import (
     discharge_readiness,
@@ -294,6 +295,18 @@ def cmd_validate(args) -> int:
     return 0
 
 
+def cmd_selftest(args) -> int:
+    """Check the per-application split against workloads we control."""
+    try:
+        res = run_selftest(args.db, scale=args.scale, window_s=args.window)
+    except RuntimeError as e:
+        print(f"selftest unavailable: {e}", file=sys.stderr)
+        return 2
+    print(render_selftest(res))
+    print()
+    return 0 if res.passed else 1
+
+
 def cmd_prune(args) -> int:
     store = Store(args.db)
     n = store.prune(args.keep_days)
@@ -378,6 +391,14 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--holdout", type=float, default=0.4)
     sp.add_argument("--plot", default=None, help="write a PNG of the discharge curve")
     sp.set_defaults(func=cmd_validate)
+
+    sp = sub.add_parser(
+        "selftest", help="check per-app attribution with known workloads"
+    )
+    sp.add_argument("--scale", type=float, default=1.0,
+                    help="shorten (<1) or lengthen (>1) every phase")
+    sp.add_argument("--window", type=float, default=2.0, help="window length")
+    sp.set_defaults(func=cmd_selftest)
 
     sp = sub.add_parser("prune", help="drop old windows")
     sp.add_argument("--keep-days", type=float, default=30.0)
