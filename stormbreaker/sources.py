@@ -249,9 +249,10 @@ class SubSample:
     freq_khz: float = 0.0
     batt_w: float = 0.0
     volt_v: float = 0.0
+    temp_c: float = 0.0
     discharging: int = 0
 
-    def add(self, soc_uw, gpu_busy, freq_khz, batt_w, volt_v, discharging) -> None:
+    def add(self, soc_uw, gpu_busy, freq_khz, batt_w, volt_v, temp_c, discharging) -> None:
         self.n += 1
         k = self.n
         # incremental mean: allocation-free however long the window runs
@@ -260,6 +261,7 @@ class SubSample:
         self.freq_khz += ((freq_khz or 0.0) - self.freq_khz) / k
         self.batt_w += ((batt_w or 0.0) - self.batt_w) / k
         self.volt_v += ((volt_v or 0.0) - self.volt_v) / k
+        self.temp_c += ((temp_c or 0.0) - self.temp_c) / k
         self.discharging += discharging
 
 
@@ -285,6 +287,12 @@ class Sampler:
             return None
         v = _read_int(self.caps.soc_power_path)
         return float(v) if v is not None else None
+
+    def read_temp_c(self) -> float | None:
+        if not self.caps.temp_path:
+            return None
+        v = _read_int(self.caps.temp_path)
+        return v / 1000.0 if v is not None else None
 
     def read_gpu_busy(self) -> float | None:
         if not self.caps.gpu_busy_path:
@@ -326,6 +334,7 @@ class Sampler:
             self.read_freq_khz(),
             watts if watts is not None else 0.0,
             volts,
+            self.read_temp_c(),
             1 if status == "Discharging" else 0,
         )
 
@@ -428,6 +437,7 @@ class Sampler:
         globals_["discharging"] = 1.0 if subs.discharging > subs.n / 2 else 0.0
         globals_["charge"] = float(cur.charge_uah or 0)
         globals_["volt_v"] = subs.volt_v
+        globals_["temp_c"] = subs.temp_c
 
         # Context switches, differenced per pid. A pid absent from the previous
         # snapshot started during this window, and its counter began at zero, so

@@ -18,7 +18,9 @@ predictive:
 
 Ridge regularisation handles the collinearity that remains (CPU time and
 context switches move together), and is applied by augmenting the system rather
-than by any bespoke solver, so ``scipy.optimize.nnls`` still does the work.
+than by any bespoke solver, so ``scipy.optimize.lsq_linear`` does the work —
+bounded-variable least squares, which is NNLS plus the physical upper bounds
+described in :func:`_upper_bounds`.
 
 CPU time is bucketed by clock frequency because the energy cost of a busy core
 is strongly superlinear in frequency; a core-second at 5 GHz and one at 1.2 GHz
@@ -239,6 +241,7 @@ def load_dataset(
             "freq_ghz",
             "charge",
             "volt_v",
+            "temp_c",
             "dt",
         )
     }

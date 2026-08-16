@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS window (
     batt_w       REAL,              -- +discharge / -charge
     discharging  INTEGER,
     charge       REAL,              -- uAh or uWh, battery dependent
-    volt_v       REAL               -- pack voltage; needed to turn uAh into Wh
+    volt_v       REAL,              -- pack voltage; needed to turn uAh into Wh
+    temp_c       REAL               -- package temperature; leakage rises with it
 );
 CREATE INDEX IF NOT EXISTS window_ts ON window(ts);
 
@@ -95,8 +96,8 @@ class Store:
         cur = self.db.execute(
             """INSERT INTO window
                (ts, dt, soc_w, rapl_pkg_w, rapl_core_w, gpu_busy,
-                freq_ghz, batt_w, discharging, charge, volt_v)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                freq_ghz, batt_w, discharging, charge, volt_v, temp_c)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 time.time(),
                 g.get("dt"),
@@ -109,6 +110,7 @@ class Store:
                 int(g.get("discharging", 0)),
                 g.get("charge"),
                 g.get("volt_v"),
+                g.get("temp_c"),
             ),
         )
         wid = cur.lastrowid

@@ -65,6 +65,8 @@ class Caps:
     has_avg_freq: bool = False
     has_time_in_state: bool = False
     gpu_busy_path: str | None = None
+    temp_path: str | None = None
+    temp_label: str | None = None
     drm_fdinfo: bool = False
     max_freq_khz: int = 0
     ncpu: int = 1
@@ -108,6 +110,10 @@ class Caps:
             "cpuinfo_avg_freq" if self.has_avg_freq else "none")
         lines.append(f"  cpu frequency:   {freq} ({len(self.cpufreq_policies)} policies)")
         lines.append(f"  gpu busy:        {self.gpu_busy_path or 'unavailable'}")
+        lines.append(
+            f"  package temp:    {self.temp_path or 'unavailable'}"
+            + (f" ({self.temp_label})" if self.temp_label else "")
+        )
         lines.append(f"  per-proc gpu:    {'drm fdinfo' if self.drm_fdinfo else 'unavailable'}")
         lines.append(f"  energy target:   {self.energy_target()}")
         return "\n".join(lines)
@@ -163,6 +169,31 @@ def _probe_battery() -> tuple[str | None, bool]:
         ):
             return path, True
     return None, False
+
+
+def _probe_temp() -> tuple[str | None, str | None]:
+    """Find a package temperature sensor, in millidegrees Celsius.
+
+    Silicon leakage current rises with temperature, so a machine at 90 C draws
+    measurably more than the same machine at 40 C doing identical work. The
+    sensor is recorded now so that effect can be tested for later; it is not
+    yet a model feature.
+    """
+    preferred = ("k10temp", "coretemp", "amdgpu", "acpitz")
+    best: tuple[int, str, str | None] | None = None
+    for hw in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name = _read_text(os.path.join(hw, "name")) or ""
+        if name not in preferred:
+            continue
+        for temp in sorted(glob.glob(os.path.join(hw, "temp*_input"))):
+            if not _readable(temp):
+                continue
+            label = _read_text(temp.replace("_input", "_label"))
+            rank = preferred.index(name)
+            if best is None or rank < best[0]:
+                best = (rank, temp, label or name)
+            break
+    return (best[1], best[2]) if best else (None, None)
 
 
 def _probe_gpu_busy() -> str | None:
@@ -224,5 +255,6 @@ def probe() -> Caps:
         c.max_freq_khz = 4_000_000
 
     c.gpu_busy_path = _probe_gpu_busy()
+    c.temp_path, c.temp_label = _probe_temp()
     c.drm_fdinfo = _probe_drm_fdinfo()
     return c

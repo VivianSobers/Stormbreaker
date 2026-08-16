@@ -129,11 +129,22 @@ def test_recreated_unit_is_dropped_not_spiked():
 
 
 def test_subsample_is_a_running_mean():
+    """Endpoint sampling misestimates a bursty window, so instantaneous sensors
+    are averaged over sub-samples rather than read twice."""
     acc = SubSample()
-    for w in (10.0, 20.0, 30.0):
-        acc.add(w * 1e6, 0.0, 0.0, 0.0, 11.0, 0)
+    for w, t in ((10.0, 40.0), (20.0, 50.0), (30.0, 60.0)):
+        acc.add(w * 1e6, 0.0, 0.0, 0.0, 11.0, t, 0)
     assert acc.soc_uw == pytest.approx(20e6)
+    assert acc.temp_c == pytest.approx(50.0)
     assert acc.n == 3
+
+
+def test_subsample_tolerates_missing_sensors():
+    """A machine without a temperature or battery sensor must still sample."""
+    acc = SubSample()
+    acc.add(5e6, None, None, None, None, None, 0)
+    assert acc.soc_uw == pytest.approx(5e6)
+    assert acc.temp_c == 0.0
 
 
 def _discharge_ds(flags, ts=None, dt=5.0):
