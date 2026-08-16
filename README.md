@@ -147,6 +147,7 @@ stormbreaker top                         # rank applications by watts
 stormbreaker report                      # battery report in minutes of life
 stormbreaker coefs                       # inspect the learned coefficients
 stormbreaker validate --plot out.png     # check the model against reality
+stormbreaker selftest                    # measure per-app attribution error
 ```
 
 `top` prints once and exits. To watch it live:
@@ -294,6 +295,49 @@ attribution is interesting.
 stormbreaker top                    # dominant profile, and says which
 stormbreaker top --profile all      # blend anyway, with a warning
 ```
+
+## How wrong is the per-application split?
+
+`stormbreaker selftest` answers this without needing ground truth that does not
+exist. It drives byte-identical workloads into two differently-named cgroups and
+checks that the model charges them the same. Whatever a busy core really costs,
+both must be charged alike; any gap is attribution error, because there is no
+reading under which the same work costs more in a differently-named cgroup.
+
+Measured on this machine over a ~4 minute run:
+
+| comparison | result |
+|---|---|
+| identical work, run at different times | **11.4%** disagreement |
+| identical work, running simultaneously on independent duty cycles | **24.2%** disagreement |
+
+So the per-application numbers carry roughly 10-25% error on a short recording.
+That is the figure to keep in mind when `top` says an application costs 1.9 W.
+
+### Getting that test right took three attempts, and the failures are the point
+
+- **Identical workloads, run together, constant load** scored a perfect 0.0%.
+  It was meaningless: identical simultaneous workloads produce numerically
+  identical activity columns, and ridge weights identical columns equally *by
+  construction*. The penalty's symmetry was being measured, not the model.
+- **Different-sized workloads, run together, constant load** scored 50%. Also
+  meaningless, for a subtler reason: two constant simultaneous loads have
+  *proportional* columns (`X_b = k * X_a`), and no estimator can divide two
+  proportional columns. The split came from the penalty, not the data.
+- **Independent duty cycles** finally made the columns distinguishable, and
+  produced the 24.2% above.
+
+That progression is the single most important fact about this method:
+
+> **Applications that always run together in fixed proportion can never be
+> separated.** Not with more data, not with a better solver. If two processes
+> are always busy at the same time in the same ratio, no measurement of total
+> power can say how the total divides between them.
+
+This is why a browser and its GPU process, or a compiler and its linker, resist
+attribution: they co-vary. Applications that start and stop independently are
+attributed well; applications welded together are not, and no amount of
+collection changes that.
 
 ## What the model cannot separate
 
