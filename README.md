@@ -5,9 +5,9 @@ Per-process battery attribution for Linux, learned per machine.
 ![Predicted vs measured discharge](docs/discharge.png)
 
 The model was fitted on the first part of an unplugged session, then asked to
-predict the next **17.1 minutes** of battery trajectory it had never seen — a
-span containing a real load transition, as a heavy GPU/CPU task ended. Both
-curves show the same elbow at ~2.5 min, and the final energy error is **+10.5%**.
+predict the next **27.6 minutes** of battery trajectory it had never seen. It
+tracks two separate load transitions — the elbow at ~2.5 min and the sharp drop
+at ~8.5 min — and lands within **4.2%** on final energy.
 
 Tracking *changes* in drain rate is the claim that matters. Two straight lines
 agreeing proves nothing, and an early run of this plot on an idle machine
@@ -205,9 +205,10 @@ Measured on one machine (AMD Ryzen AI 7 350, Radeon 860M, Fedora, kernel
 
 | check | result |
 |---|---|
-| Discharge curve, **17.1 min** held out, 195 windows, load transition | **MAE 0.377 Wh, final error +10.5%** |
-| Discharge curve, 7.6 min held out, 82 windows, steadier load | MAE 0.149 Wh, final error +3.7% |
-| Runtime estimate (17 min run) | 1.22 h predicted vs 1.03 h measured |
+| Discharge curve, **27.6 min** held out, 320 windows, two load transitions | **MAE 0.201 Wh, final error +4.2%** |
+| Discharge curve, 17.1 min held out, 195 windows | MAE 0.377 Wh, final error +10.5% |
+| Discharge curve, 7.6 min held out, 82 windows | MAE 0.149 Wh, final error +3.7% |
+| Runtime estimate (27.6 min run) | 1.19 h predicted vs 1.11 h measured |
 | System model (`package -> battery`) | **R^2 0.937** |
 | Held-out *package* power | **R^2 -0.30 to +0.29** depending on split |
 
@@ -229,10 +230,12 @@ fitted to a saturated machine do not describe an idle one, and vice versa.
 Longer recordings help, but a model fitted over a rolling window will always
 lag a regime change.
 
-Other limits: one machine, one session, and the whole-session split still fails
-outright when load occupies only the final third of the recording — visible as
-a model that tracks an idle machine perfectly and then completely misses the
-moment work starts.
+Other limits: one machine, one session. Note also that the whole-session split
+only succeeded *because* the finished recording happened to place load on both
+sides of it. Run mid-session, with load confined to the final third, the same
+command failed outright — a model that tracked an idle machine perfectly and
+then missed the moment work started. The 27.6-minute result above is what the
+method can do given representative data, not what it does automatically.
 
 What *has* been measured, on one machine (AMD Ryzen AI 7 350, Radeon 860M,
 Fedora, kernel 7.0.10), over 4.3 minutes and 129 windows of scripted load:
