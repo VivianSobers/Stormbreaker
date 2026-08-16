@@ -51,3 +51,29 @@ def test_subsample_interval_never_exceeds_half_the_window(tmp_path):
     c = _collector(tmp_path, window_s=1.0, subsample_s=10.0)
     assert c.subsample_s <= 0.5
     c.store.close()
+
+
+def test_collector_runs_outside_the_main_thread(tmp_path):
+    """The collector is used as a library by the self-test, from a worker
+    thread. Signal handlers can only be installed from the main thread, and
+    registering them unconditionally killed that thread silently — no windows
+    collected, no error surfaced.
+    """
+    import threading
+
+    c = _collector(tmp_path, window_s=0.2, subsample_s=0.05)
+    error: list[BaseException] = []
+
+    def target():
+        try:
+            c.run(duration_s=0.6)
+        except BaseException as e:  # noqa: BLE001 - the point is to catch all
+            error.append(e)
+
+    t = threading.Thread(target=target)
+    t.start()
+    t.join(timeout=20)
+
+    assert not error, f"collector raised in a worker thread: {error}"
+    assert not t.is_alive()
+    c.store.close()
