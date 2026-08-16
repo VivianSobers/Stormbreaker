@@ -304,13 +304,31 @@ class Sampler:
         vals = [v for v in (_read_int(p) for p in self._freq_paths) if v]
         return sum(vals) / len(vals) if vals else None
 
-    def read_battery(self) -> tuple[float | None, str, int | None, float | None]:
-        """Returns (watts, status, charge, volts). Watts is positive while
-        discharging and negative while charging. ``charge`` is in uAh on
+    def on_battery(self, status: str) -> bool:
+        """Whether the machine is currently running from the battery.
+
+        The battery's own status string is not trustworthy for this. A pack at
+        100% reports ``Full`` rather than ``Discharging`` immediately after the
+        mains is pulled, and firmware flips between the two as it updates —
+        which chops a genuine discharge run into fragments too short to
+        validate against. The mains adapter's ``online`` flag has no such
+        ambiguity, so it wins wherever it exists.
+        """
+        if self.caps.ac_online_path:
+            v = _read_int(self.caps.ac_online_path)
+            if v is not None:
+                return v == 0
+        return status == "Discharging"
+
+    def read_battery(
+        self,
+    ) -> tuple[float | None, str, int | None, float | None, bool]:
+        """Returns (watts, status, charge, volts, on_battery). Watts is positive
+        while discharging and negative while charging. ``charge`` is in uAh on
         charge-based batteries and uWh on energy-based ones."""
         bat = self.caps.battery
         if not bat:
-            return None, "Unknown", None, None
+            return None, "Unknown", None, None, False
         status = (_read(os.path.join(bat, "status")) or "Unknown").strip()
         vol = _read_int(os.path.join(bat, "voltage_now"))
         volts = vol / 1e6 if vol else None
@@ -322,12 +340,14 @@ class Sampler:
             pw = _read_int(os.path.join(bat, "power_now"))
             charge = _read_int(os.path.join(bat, "energy_now"))
             watts = pw / 1e6 if pw is not None else None
-        if watts is not None and status == "Charging":
-            watts = -watts
-        return watts, status, charge, volts
+        discharging = self.on_battery(status)
+        if watts is not None and not discharging:
+            # On mains the current reading describes charging, not consumption.
+            watts = -abs(watts)
+        return watts, status, charge, volts, discharging
 
     def subsample(self, acc: SubSample) -> None:
-        watts, status, _charge, volts = self.read_battery()
+        watts, _status, _charge, volts, discharging = self.read_battery()
         acc.add(
             self.read_soc_uw(),
             self.read_gpu_busy(),
@@ -335,7 +355,7 @@ class Sampler:
             watts if watts is not None else 0.0,
             volts,
             self.read_temp_c(),
-            1 if status == "Discharging" else 0,
+            1 if discharging else 0,
         )
 
     # -- counter snapshot -----------------------------------------------------
@@ -358,7 +378,7 @@ class Sampler:
             if v is not None:
                 snap.rapl_uj[dom.name] = v
 
-        _, status, charge, _ = self.read_battery()
+        _, status, charge, _, _ = self.read_battery()
         snap.battery_status = status
         snap.charge_uah = charge
 

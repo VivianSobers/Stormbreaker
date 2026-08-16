@@ -147,6 +147,43 @@ def test_subsample_tolerates_missing_sensors():
     assert acc.temp_c == 0.0
 
 
+def _sampler_with_ac(tmp_path, online: str | None, battery=True):
+    c = Caps()
+    c.battery = "/nonexistent" if battery else None
+    if online is not None:
+        p = tmp_path / "online"
+        p.write_text(online)
+        c.ac_online_path = str(p)
+    return Sampler(c, gpu_fdinfo=False)
+
+
+def test_full_battery_on_mains_power_still_counts_as_discharging(tmp_path):
+    """Regression test for a bug that blocked discharge validation entirely.
+
+    A pack at 100% reports ``Full`` rather than ``Discharging`` for the first
+    minutes after unplugging, and firmware alternates between the two. Trusting
+    the status string chopped a real discharge run into 1-2 window fragments,
+    so no segment ever reached the length needed to validate.
+    """
+    s = _sampler_with_ac(tmp_path, "0")
+    assert s.on_battery("Full") is True
+    assert s.on_battery("Discharging") is True
+    assert s.on_battery("Unknown") is True
+
+
+def test_mains_present_overrides_battery_status(tmp_path):
+    s = _sampler_with_ac(tmp_path, "1")
+    assert s.on_battery("Discharging") is False
+    assert s.on_battery("Full") is False
+
+
+def test_falls_back_to_status_without_a_mains_adapter(tmp_path):
+    """A desktop or an unusual firmware may expose no Mains supply at all."""
+    s = _sampler_with_ac(tmp_path, None)
+    assert s.on_battery("Discharging") is True
+    assert s.on_battery("Full") is False
+
+
 def _discharge_ds(flags, ts=None, dt=5.0):
     n = len(flags)
     ts = np.arange(n, dtype=float) * dt if ts is None else np.asarray(ts, float)

@@ -51,6 +51,10 @@ class Caps:
     battery: str | None = None
     """sysfs power_supply directory for the battery, if present."""
 
+    ac_online_path: str | None = None
+    """Mains adapter 'online' flag. This, not the battery status string, is the
+    authoritative answer to 'are we on battery right now'."""
+
     battery_charge_based: bool = False
     """True when the battery reports charge_now/current_now (uAh/uA) rather
     than energy_now/power_now (uWh/uW). Both are handled; they need different
@@ -101,6 +105,7 @@ class Caps:
         if self.battery:
             kind = "charge-based (I*V)" if self.battery_charge_based else "energy-based"
             lines.append(f"  battery:         {self.battery} [{kind}]")
+            lines.append(f"  mains adapter:   {self.ac_online_path or 'unavailable'}")
         else:
             lines.append("  battery:         unavailable (desktop?)")
         lines.append(f"  cgroup v2:       {self.cgroup_root or 'unavailable'}")
@@ -154,6 +159,16 @@ def _probe_soc_power() -> tuple[str | None, str | None]:
         return None, None
     candidates.sort(key=lambda c: c[0])
     return candidates[0][1], candidates[0][2]
+
+
+def _probe_mains() -> str | None:
+    for path in sorted(glob.glob("/sys/class/power_supply/*")):
+        if (_read_text(os.path.join(path, "type")) or "") != "Mains":
+            continue
+        online = os.path.join(path, "online")
+        if _readable(online):
+            return online
+    return None
 
 
 def _probe_battery() -> tuple[str | None, bool]:
@@ -237,6 +252,7 @@ def probe() -> Caps:
     c.rapl = _probe_rapl()
     c.soc_power_path, c.soc_power_label = _probe_soc_power()
     c.battery, c.battery_charge_based = _probe_battery()
+    c.ac_online_path = _probe_mains()
 
     if os.path.exists("/sys/fs/cgroup/cgroup.controllers"):
         c.cgroup_root = "/sys/fs/cgroup"
