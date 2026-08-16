@@ -264,3 +264,31 @@ def test_readiness_passes_once_the_gauge_moves():
     charge = np.linspace(3_214_000.0, 3_100_000.0, n).round(-4)
     ds = _charge_ds([1] * n, charge)
     assert discharge_readiness(ds) == "ready"
+
+
+def test_charge_to_energy_is_monotonic_under_load_swings():
+    """Regression test: converting charge with the instantaneous terminal
+    voltage made "energy remaining" *rise* during a discharge.
+
+    Terminal voltage is open-circuit minus I*R, so it sags under load and
+    recovers when load drops. Across a 3.2 Ah pack a 1 V swing is a 3.2 Wh
+    swing — far larger than the energy actually drawn over a few minutes.
+    """
+    from stormbreaker.validate import _wh_from_charge
+
+    n = 60
+    charge = np.linspace(3_200_000, 3_150_000, n)  # strictly draining
+    # voltage collapses mid-segment under a load burst, then recovers
+    volts = np.full(n, 12.6)
+    volts[20:40] = 11.4
+
+    wh = _wh_from_charge(charge, volts)
+    assert np.all(np.diff(wh) < 0), "energy must fall while charge falls"
+    assert wh[0] > wh[-1]
+
+
+def test_charge_to_energy_needs_a_voltage():
+    from stormbreaker.validate import _wh_from_charge
+
+    with pytest.raises(ValueError, match="no pack voltage"):
+        _wh_from_charge(np.array([3_200_000.0]), np.array([np.nan]))

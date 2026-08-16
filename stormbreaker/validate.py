@@ -65,13 +65,28 @@ def find_discharge_segments(ds: Dataset, min_windows: int = 60) -> list[Segment]
 
 
 def _wh_from_charge(charge_uah: np.ndarray, volts: np.ndarray) -> np.ndarray:
-    """uAh at V volts -> Wh. The pack voltage sags over a discharge, so it is
-    tracked per window rather than assumed constant."""
-    volts = np.where(np.isfinite(volts) & (volts > 1.0), volts, np.nan)
-    if np.all(np.isnan(volts)):
+    """uAh -> Wh, using a single nominal voltage for the whole segment.
+
+    Converting with the *instantaneous* terminal voltage seems more precise and
+    is badly wrong. Terminal voltage is open-circuit voltage minus I*R, so it
+    sags the moment load rises and recovers when load drops. Across a 3.2 Ah
+    pack a 1 V swing is a 3.2 Wh swing — larger than the energy actually drawn
+    over several minutes, and enough to make the converted "energy remaining"
+    curve rise while the battery is definitely discharging.
+
+    The gauge's charge reading is a coulomb count, so a constant conversion
+    keeps it monotonic and preserves the quantity being validated. The median
+    is used rather than the mean because load spikes drag the mean down.
+
+    The real open-circuit voltage does fall as the pack empties, but over a
+    validation window of minutes that drift is far smaller than the IR noise
+    this avoids.
+    """
+    ok = np.isfinite(volts) & (volts > 1.0)
+    if not ok.any():
         raise ValueError("no pack voltage recorded; cannot convert charge to energy")
-    volts = np.nan_to_num(volts, nan=float(np.nanmean(volts)))
-    return charge_uah * volts / 1e6
+    nominal = float(np.median(volts[ok]))
+    return charge_uah * nominal / 1e6
 
 
 @dataclass
