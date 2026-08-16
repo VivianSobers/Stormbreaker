@@ -84,6 +84,11 @@ exactly once:
 | Context switches | `/proc/PID/status`, differenced per pid |
 | GPU engine time | `drm-engine-*` in `/proc/PID/fdinfo`, differenced per DRM client |
 
+Package temperature (`k10temp`/`coretemp`) is recorded per window but is not yet
+a model feature. Silicon leakage rises with temperature, so it is a candidate
+explanation for residual error; it is being collected so the question can be
+settled with data rather than asserted.
+
 Frequency bucketing matters because the energy cost of a busy core is strongly
 superlinear in clock: a core-second at 5 GHz and one at 1.2 GHz are different
 goods and must not share a coefficient.
@@ -119,6 +124,12 @@ stormbreaker coefs                       # inspect the learned coefficients
 stormbreaker validate --plot out.png     # check the model against reality
 ```
 
+`top` prints once and exits. To watch it live:
+
+```sh
+stormbreaker top --watch                 # refresh continuously
+```
+
 By default each command fits a fresh model from the stored windows. To fit once
 and reuse it:
 
@@ -126,6 +137,13 @@ and reuse it:
 stormbreaker fit                         # fit and store the model
 stormbreaker top --saved                 # reuse it instead of refitting
 ```
+
+The collector also refits in the background every ten minutes over a trailing
+four-hour window (`--refit-every`, `--rolling-hours`), so a long-running
+collector keeps the stored model current on its own. A refit that fails is
+logged and discarded rather than allowed to interrupt sampling: a window not
+recorded is gone forever, whereas a fit can be recomputed from the data at any
+time.
 
 A stored model is a vector of coefficients whose meaning is positional, and the
 set of running applications changes between runs, so `--saved` re-aligns the
@@ -185,6 +203,21 @@ load. Two synthetic loads pinned in their own cgroups at 2 and 6 cores were
 recovered as the top two consumers.
 
 Five minutes is a small sample and one machine is one machine.
+
+## What the model cannot separate
+
+Attribution is identifiable only where activity *varies*. A service that runs
+at a constant level is collinear with the idle baseline, and no amount of data
+fixes that — the two are mathematically indistinguishable within a recording
+where the service never changes what it is doing.
+
+This is not hypothetical. On an idle machine an early build credited a desktop
+portal with 5.35 W, 57% of the total, on 0.045 busy cores, while reporting an
+idle baseline of 0. The fit was excellent; the attribution was meaningless. The
+tie is now broken in favour of the baseline — always-on draw is reported as
+unattributable rather than blamed on whichever daemon happens to be constant —
+but the underlying limit remains. Treat a large number against a service that
+never varies with suspicion, and check its activity columns.
 
 ## Reading the output
 
