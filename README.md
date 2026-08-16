@@ -5,10 +5,13 @@ Per-process battery attribution for Linux, learned per machine.
 ![Predicted vs measured discharge](docs/discharge.png)
 
 The model was fitted on the first part of an unplugged session, then asked to
-predict the next 7.6 minutes of battery trajectory it had never seen. It landed
-within **3.7%**, and — the part that matters — the predicted curve *bends where
-the real one bends*. Two straight lines agreeing would prove nothing; tracking
-changes in drain rate is a claim only a working model can satisfy.
+predict the next **17.1 minutes** of battery trajectory it had never seen — a
+span containing a real load transition, as a heavy GPU/CPU task ended. Both
+curves show the same elbow at ~2.5 min, and the final energy error is **+10.5%**.
+
+Tracking *changes* in drain rate is the claim that matters. Two straight lines
+agreeing proves nothing, and an early run of this plot on an idle machine
+produced exactly that — see the honesty note below.
 
 Tells you what is actually draining your battery, in watts rather than CPU
 percent:
@@ -202,23 +205,34 @@ Measured on one machine (AMD Ryzen AI 7 350, Radeon 860M, Fedora, kernel
 
 | check | result |
 |---|---|
-| Discharge curve, 7.6 min held out, 82 windows | **MAE 0.149 Wh, final error +3.7%** |
-| Runtime estimate | 0.94 h predicted vs 0.85 h measured |
-| System model (`package -> battery`) | **R^2 0.923** |
-| Held-out *package* power | R^2 0.288, MAE 8.4 W vs 17.8 W naive |
+| Discharge curve, **17.1 min** held out, 195 windows, load transition | **MAE 0.377 Wh, final error +10.5%** |
+| Discharge curve, 7.6 min held out, 82 windows, steadier load | MAE 0.149 Wh, final error +3.7% |
+| Runtime estimate (17 min run) | 1.22 h predicted vs 1.03 h measured |
+| System model (`package -> battery`) | **R^2 0.937** |
+| Held-out *package* power | **R^2 -0.30 to +0.29** depending on split |
 
-**Read those two last rows together.** Predicting how fast the battery drains
-is a much easier claim than saying *which application* drained it, and only the
-first is well supported here. The discharge curve validates the total; the
-held-out package R^2 of 0.288 is what bounds confidence in the per-application
-breakdown, and it is modest. A model can get the total right while splitting it
-between applications incorrectly.
+**Read the last two rows together.** Predicting how fast the battery drains is
+a much easier claim than saying *which application* drained it, and only the
+first is well supported. The discharge curve validates the total; held-out
+package R^2 is what bounds confidence in the per-application breakdown, and it
+ranges from +0.29 to **negative** depending on where the split falls. A model
+can get the total right while dividing it between applications wrongly. The
+per-app numbers in `top` should be read as indicative, not measured.
 
-Other honest limits: the held-out span is 7.6 minutes, not hours. The split
-that covers the *whole* 55-minute session still fails, because load only
-appeared in its final third, leaving the training half with nothing to learn
-from — visible as a model that tracks an idle machine perfectly and then misses
-the moment work starts. One machine, one session.
+The reason that R^2 swings so much is worth stating plainly, because it is a
+property of the problem rather than a shortfall of this recording: **real
+desktop use is non-stationary**. Over 75 minutes this machine was idle, then
+ran a heavy GPU and CPU load, then went quiet again. Any chronological split
+therefore trains on one regime and tests on another — in one split the training
+half held every window above 25 W and the test half held none. Coefficients
+fitted to a saturated machine do not describe an idle one, and vice versa.
+Longer recordings help, but a model fitted over a rolling window will always
+lag a regime change.
+
+Other limits: one machine, one session, and the whole-session split still fails
+outright when load occupies only the final third of the recording — visible as
+a model that tracks an idle machine perfectly and then completely misses the
+moment work starts.
 
 What *has* been measured, on one machine (AMD Ryzen AI 7 350, Radeon 860M,
 Fedora, kernel 7.0.10), over 4.3 minutes and 129 windows of scripted load:
