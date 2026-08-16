@@ -10,3 +10,4 @@ dist/
 *.db-wal
 *.db-shm
 *.png
+!docs/*.png

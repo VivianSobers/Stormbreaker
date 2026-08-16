@@ -2,6 +2,14 @@
 
 Per-process battery attribution for Linux, learned per machine.
 
+![Predicted vs measured discharge](docs/discharge.png)
+
+The model was fitted on the first part of an unplugged session, then asked to
+predict the next 7.6 minutes of battery trajectory it had never seen. It landed
+within **3.7%**, and — the part that matters — the predicted curve *bends where
+the real one bends*. Two straight lines agreeing would prove nothing; tracking
+changes in drain rate is a claim only a working model can satisfy.
+
 Tells you what is actually draining your battery, in watts rather than CPU
 percent:
 
@@ -84,16 +92,23 @@ exactly once:
 | Context switches | `/proc/PID/status`, differenced per pid |
 | GPU engine time | `drm-engine-*` in `/proc/PID/fdinfo`, differenced per DRM client |
 
-Package temperature (`k10temp`/`coretemp`) is recorded per window but is not yet
-a model feature. Silicon leakage rises with temperature, so it is a candidate
-explanation for residual error.
+Package temperature (`k10temp`/`coretemp`) is recorded per window and is used by
+the **system model**, though not by the per-application attribution. A package
+sensor cannot see the fans, and fan power tracks temperature rather than
+instantaneous compute. Adding the term lifted held-out system-model R^2 from
+0.885 to 0.927 and, more importantly, cut a systematic +0.96 W under-prediction
+to -0.30 W — which is what closed most of the gap in the plot above.
 
-A first attempt to test that was **confounded and is not evidence**. On an idle
-recording the fitted model explained 0.4% of variance, so the residual was
-essentially the signal itself (`corr(y, residual) = 0.987`) and duly correlated
-with temperature at 0.85 — exactly as it would with any quantity that tracks
-power. Settling the question needs a recording where the model actually works,
-so that "what is left over" means something. Noted here because the confounded
+Two caveats kept deliberately visible. Package power and temperature are
+strongly collinear here (r = 0.94), so the coefficient is partly a proxy for
+sustained load rather than a clean fan measurement; it earns its place on
+held-out accuracy, not on a claim about which watts are whose.
+
+And an earlier attempt to test temperature against the *attribution* residual
+was **confounded and is not evidence**: on an idle recording the model explained
+0.4% of variance, so the residual was essentially the signal itself
+(`corr(y, residual) = 0.987`) and duly correlated with temperature at 0.85 —
+as it would with any quantity that tracks power. Noted because the confounded
 version looks persuasive.
 
 Frequency bucketing matters because the energy cost of a busy core is strongly
@@ -180,12 +195,30 @@ it, and compare against the fuel gauge. The gauge's charge reading is an
 integral measurement accumulated independently of every counter being regressed
 on, so agreement is not something the fit can manufacture.
 
-### Status: unproven
+### Status: the energy total is validated; the per-app split is not
 
-The discharge check has **never been run against real data** — the development
-machine was on AC for the whole session, so it has only ever taken its
-no-unplugged-data path. Until it runs, the attribution is plausible but not
-demonstrated. Treat the numbers accordingly.
+Measured on one machine (AMD Ryzen AI 7 350, Radeon 860M, Fedora, kernel
+7.0.10) over a 55-minute unplugged session:
+
+| check | result |
+|---|---|
+| Discharge curve, 7.6 min held out, 82 windows | **MAE 0.149 Wh, final error +3.7%** |
+| Runtime estimate | 0.94 h predicted vs 0.85 h measured |
+| System model (`package -> battery`) | **R^2 0.923** |
+| Held-out *package* power | R^2 0.288, MAE 8.4 W vs 17.8 W naive |
+
+**Read those two last rows together.** Predicting how fast the battery drains
+is a much easier claim than saying *which application* drained it, and only the
+first is well supported here. The discharge curve validates the total; the
+held-out package R^2 of 0.288 is what bounds confidence in the per-application
+breakdown, and it is modest. A model can get the total right while splitting it
+between applications incorrectly.
+
+Other honest limits: the held-out span is 7.6 minutes, not hours. The split
+that covers the *whole* 55-minute session still fails, because load only
+appeared in its final third, leaving the training half with nothing to learn
+from — visible as a model that tracks an idle machine perfectly and then misses
+the moment work starts. One machine, one session.
 
 What *has* been measured, on one machine (AMD Ryzen AI 7 350, Radeon 860M,
 Fedora, kernel 7.0.10), over 4.3 minutes and 129 windows of scripted load:
