@@ -64,7 +64,11 @@ class Store:
     def __init__(self, path: str = DEFAULT_DB):
         self.path = path
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        self.db = sqlite3.connect(path)
+        # check_same_thread=False because the collector is also driven from a
+        # worker thread (see selftest), and Python's sqlite3 is built in
+        # serialized mode, so the library locks internally. Access here is in
+        # any case effectively serialised: exactly one thread writes.
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")

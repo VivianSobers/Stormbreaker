@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import signal
 import sys
+import threading
 import time
 
 import numpy as np
@@ -87,8 +88,13 @@ class Collector:
         self._stop = True
 
     def run(self, duration_s: float | None = None, verbose: bool = False) -> int:
-        signal.signal(signal.SIGINT, self.stop)
-        signal.signal(signal.SIGTERM, self.stop)
+        # Signal handlers can only be installed from the main thread. The
+        # collector is also used as a library — the self-test drives it from a
+        # worker thread — so registering unconditionally makes it unusable
+        # there, and the failure is silent because the thread just dies.
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self.stop)
+            signal.signal(signal.SIGTERM, self.stop)
 
         started = time.monotonic()
         prev = self.sampler.snapshot()
