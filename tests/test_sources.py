@@ -10,7 +10,11 @@ import pytest
 
 from stormbreaker.caps import Caps
 from stormbreaker.sources import CgCounters, Sampler, Snapshot, SubSample, pretty_unit
-from stormbreaker.validate import find_discharge_segments
+from stormbreaker.validate import (
+    discharge_readiness,
+    find_discharge_segments,
+    validate_discharge,
+)
 from stormbreaker.model import Dataset
 
 
@@ -222,3 +226,41 @@ def test_sampling_gap_splits_a_segment():
 def test_short_segments_are_ignored():
     ds = _discharge_ds([1] * 10 + [0] * 50)
     assert find_discharge_segments(ds, min_windows=60) == []
+
+
+def _charge_ds(flags, charge):
+    ds = _discharge_ds(flags)
+    ds.globals_["charge"] = np.asarray(charge, float)
+    ds.globals_["batt_w"] = np.full(len(flags), 10.0)
+    return ds
+
+
+def test_readiness_reports_no_unplugged_windows():
+    ds = _charge_ds([0] * 100, [3_000_000.0] * 100)
+    assert "no unplugged windows" in discharge_readiness(ds)
+
+
+def test_readiness_reports_fragmented_run():
+    """Alternating flags — the exact symptom of trusting the battery status
+    string on a full pack — must be named as a fragmentation problem."""
+    flags = [1, 1, 0] * 40
+    ds = _charge_ds(flags, [3_000_000.0] * len(flags))
+    msg = discharge_readiness(ds)
+    assert "consecutive" in msg
+
+
+def test_readiness_reports_an_unmoving_fuel_gauge():
+    """A long clean run against a gauge stuck on one value is not validatable,
+    and must say so rather than divide by a near-zero energy drop."""
+    n = 120
+    ds = _charge_ds([1] * n, [3_214_000.0] * n)
+    msg = discharge_readiness(ds)
+    assert "distinct value" in msg
+    assert validate_discharge(ds) is None
+
+
+def test_readiness_passes_once_the_gauge_moves():
+    n = 120
+    charge = np.linspace(3_214_000.0, 3_100_000.0, n).round(-4)
+    ds = _charge_ds([1] * n, charge)
+    assert discharge_readiness(ds) == "ready"

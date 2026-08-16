@@ -90,6 +90,41 @@ class DischargeResult:
     sysmod: SystemModel
 
 
+MIN_GAUGE_STEPS = 4
+"""Distinct fuel-gauge readings needed across the held-out span.
+
+A charge gauge reports in coarse quantised steps — 1% of a 38 Wh pack is
+0.38 Wh here. Comparing a predicted curve against a measurement that took two
+or three values is not a validation, it is a coincidence, and dividing by the
+resulting near-zero energy drop yields impressive-looking nonsense.
+"""
+
+
+def discharge_readiness(ds: Dataset, charge_based: bool = True) -> str:
+    """Explain why a discharge validation cannot run yet."""
+    segs = find_discharge_segments(ds)
+    if not segs:
+        disch = int((ds.globals_["discharging"] > 0.5).sum())
+        if disch == 0:
+            return "no unplugged windows recorded yet"
+        return (
+            f"{disch} unplugged windows, but no run of {60} consecutive ones "
+            "(a gap, a suspend, or a collector restart splits a segment)"
+        )
+    seg = max(segs, key=len)
+    idx = np.arange(seg.start, seg.stop)
+    steps = len(np.unique(ds.globals_["charge"][idx]))
+    if steps < MIN_GAUGE_STEPS:
+        drawn = float(np.nansum(ds.globals_["batt_w"][idx] * ds.globals_["dt"][idx]))
+        return (
+            f"longest unplugged run is {len(seg)} windows "
+            f"({len(seg)*5/60:.0f} min), but the fuel gauge has only reported "
+            f"{steps} distinct value(s) over it — roughly {drawn/3600:.2f} Wh drawn "
+            "with no resolvable change. Draw more power or run longer"
+        )
+    return "ready"
+
+
 def validate_discharge(
     ds: Dataset,
     charge_based: bool = True,
@@ -101,6 +136,8 @@ def validate_discharge(
     if not segs:
         return None
     seg = segment or max(segs, key=len)
+    if len(np.unique(ds.globals_["charge"][seg.start : seg.stop])) < MIN_GAUGE_STEPS:
+        return None
     cut = seg.start + max(int(len(seg) * (1 - holdout)), 30)
     if cut >= seg.stop - 10:
         return None

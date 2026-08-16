@@ -20,7 +20,12 @@ from .model import (
 )
 from .report import load_and_report, render_daily, render_top
 from .store import DEFAULT_DB, Store
-from .validate import plot_discharge, validate_discharge, validate_holdout
+from .validate import (
+    discharge_readiness,
+    plot_discharge,
+    validate_discharge,
+    validate_holdout,
+)
 
 
 def _since(minutes: float | None) -> float | None:
@@ -223,10 +228,10 @@ def cmd_validate(args) -> int:
     charge_based = store.get_meta("battery_charge_based") == "1"
     res = validate_discharge(ds, charge_based=charge_based, holdout=args.holdout)
     if res is None:
+        print(f"   Not ready: {discharge_readiness(ds, charge_based)}.")
         print(
-            "   No usable unplugged segment yet. Unplug the machine and let the\n"
-            "   collector run for ~20 minutes, then re-run this command. This is\n"
-            "   the check that actually proves the attribution, so it is worth it."
+            "   This is the check that actually proves the attribution, so it is\n"
+            "   worth getting the conditions right."
         )
     else:
         print(f"   trained on {res.n_train} windows, predicted {res.n_test} forward")
