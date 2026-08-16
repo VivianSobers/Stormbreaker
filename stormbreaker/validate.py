@@ -190,6 +190,9 @@ def validate_discharge(
     sub_test = _subset(ds, test)
     pkg_pred = predict(sub_test, f)
     sys_pred = sysmod.intercept + sysmod.slope * pkg_pred
+    if sysmod.temp_coef:
+        t = ds.globals_["temp_c"][test]
+        sys_pred = sys_pred + sysmod.temp_coef * np.clip(t - sysmod.temp_ref, 0, None)
 
     dt = ds.globals_["dt"][test]
     volts = ds.globals_["volt_v"][test]
