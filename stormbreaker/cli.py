@@ -12,9 +12,12 @@ from .collect import run_collect
 from .model import (
     align_to_fit,
     coefficient_table,
+    dominant_profile,
+    filter_to_profile,
     fit,
     load_dataset,
     load_fit,
+    profile_mix,
     save_fit,
     unknown_labels,
 )
@@ -51,7 +54,39 @@ def _load(args, min_minutes: float | None = None):
             file=sys.stderr,
         )
         raise SystemExit(2)
-    return store, _reload(store, args)
+    ds = _reload(store, args)
+    return store, _apply_profile(ds, args)
+
+
+def _apply_profile(ds, args):
+    """Keep the fit inside one power regime unless told otherwise.
+
+    A profile change rewrites the machine's cost structure, so a dataset
+    spanning two of them yields coefficients describing neither. Rather than
+    silently averaging, restrict to the dominant regime and say so.
+    """
+    mix = profile_mix(ds)
+    if len(mix) <= 1:
+        return ds
+    want = getattr(args, "profile", None)
+    if want == "all":
+        print(
+            f"warning: fitting across {len(mix)} power profiles; coefficients "
+            "will describe none of them",
+            file=sys.stderr,
+        )
+        return ds
+    chosen = want or dominant_profile(ds)
+    kept = mix.get(chosen, 0)
+    dropped = sum(mix.values()) - kept
+    print(
+        f"note: data spans {len(mix)} power profiles. Using '{chosen}' "
+        f"({kept} windows); dropped {dropped}.\n"
+        f"      Profiles seen: {', '.join(sorted(mix))}. "
+        "Use --profile all to override.",
+        file=sys.stderr,
+    )
+    return filter_to_profile(ds, chosen)
 
 
 def _fit_for(args, store, ds):
@@ -302,6 +337,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="CPU frequency buckets (default: sized to the data)")
         sp.add_argument("--target", default=None,
                         help="energy column to regress on (soc_w | rapl_pkg_w)")
+        sp.add_argument("--profile", default=None,
+                        help="power regime to fit on, or 'all' to mix them "
+                             "(default: the most common one present)")
 
     def add_saved_arg(sp):
         sp.add_argument("--saved", action="store_true",
