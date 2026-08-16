@@ -237,6 +237,7 @@ class Snapshot:
     gpu_label: dict[int, str] = field(default_factory=dict)
     charge_uah: int | None = None
     battery_status: str = "Unknown"
+    profile: str = ""
 
 
 @dataclass
@@ -287,6 +288,18 @@ class Sampler:
             return None
         v = _read_int(self.caps.soc_power_path)
         return float(v) if v is not None else None
+
+    def read_profile(self) -> str:
+        """An opaque identifier for the current power regime.
+
+        The individual values are never interpreted — only compared against the
+        previous window's, so that a change can be treated as a boundary.
+        """
+        parts = []
+        for path in self.caps.profile_paths:
+            v = _read(path)
+            parts.append(v.strip() if v else "?")
+        return "|".join(parts)
 
     def read_temp_c(self) -> float | None:
         if not self.caps.temp_path:
@@ -381,6 +394,7 @@ class Sampler:
         _, status, charge, _, _ = self.read_battery()
         snap.battery_status = status
         snap.charge_uah = charge
+        snap.profile = self.read_profile()
 
         if not self.caps.cgroup_root:
             return snap
@@ -458,6 +472,7 @@ class Sampler:
         globals_["charge"] = float(cur.charge_uah or 0)
         globals_["volt_v"] = subs.volt_v
         globals_["temp_c"] = subs.temp_c
+        globals_["profile"] = cur.profile
 
         # Context switches, differenced per pid. A pid absent from the previous
         # snapshot started during this window, and its counter began at zero, so
