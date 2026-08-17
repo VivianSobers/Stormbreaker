@@ -55,7 +55,25 @@ def _load(args, min_minutes: float | None = None):
             file=sys.stderr,
         )
         raise SystemExit(2)
-    ds = _reload(store, args)
+    try:
+        ds = _reload(store, args)
+    except ValueError as e:
+        # The database has rows, but the time filter selected none of them.
+        # A traceback here tells the user nothing they can act on.
+        mins = getattr(args, "minutes", None)
+        newest = store.db.execute("SELECT MAX(ts) FROM window").fetchone()[0]
+        age = (time.time() - newest) / 60.0 if newest else 0.0
+        if mins:
+            print(
+                f"No windows in the last {mins:g} min "
+                f"({store.window_count()} in the database, newest is "
+                f"{age:.0f} min old).\n"
+                f"Try:  --minutes {max(int(age * 1.5), int(mins) + 1)}",
+                file=sys.stderr,
+            )
+        else:
+            print(str(e), file=sys.stderr)
+        raise SystemExit(2) from None
     return store, _apply_profile(ds, args)
 
 
@@ -156,6 +174,7 @@ def cmd_collect(args) -> int:
         duration_s=args.duration,
         verbose=args.verbose,
         gpu_fdinfo=not args.no_gpu,
+        subsample_s=args.subsample,
         refit_every_s=args.refit_every,
         rolling_hours=args.rolling_hours,
     )
@@ -331,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--window", type=float, default=5.0, help="window length, seconds")
     sp.add_argument("--duration", type=float, default=None, help="stop after N seconds")
     sp.add_argument("--no-gpu", action="store_true", help="skip per-process GPU scan")
+    sp.add_argument("--subsample", type=float, default=0.5,
+                    help="seconds between instantaneous-sensor reads; larger "
+                         "means fewer wakeups and a cheaper collector")
     sp.add_argument("--refit-every", type=float, default=600.0, dest="refit_every",
                     help="seconds between background refits (0 disables)")
     sp.add_argument("--rolling-hours", type=float, default=4.0, dest="rolling_hours",

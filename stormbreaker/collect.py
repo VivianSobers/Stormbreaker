@@ -161,6 +161,7 @@ def run_collect(
     duration_s: float | None,
     verbose: bool,
     gpu_fdinfo: bool = True,
+    subsample_s: float = 0.5,
     refit_every_s: float = 600.0,
     rolling_hours: float = 4.0,
 ) -> int:
@@ -177,6 +178,7 @@ def run_collect(
         db_path,
         window_s=window_s,
         gpu_fdinfo=gpu_fdinfo,
+        subsample_s=subsample_s,
         caps=caps,
         refit_every_s=refit_every_s,
         rolling_hours=rolling_hours,
