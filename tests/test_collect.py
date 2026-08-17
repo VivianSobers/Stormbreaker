@@ -77,3 +77,35 @@ def test_collector_runs_outside_the_main_thread(tmp_path):
     assert not error, f"collector raised in a worker thread: {error}"
     assert not t.is_alive()
     c.store.close()
+
+
+def test_memory_stat_is_off_by_default(tmp_path):
+    """Page-fault collection is opt-in. Measured, it added ~54% to the scan
+    cost while making held-out prediction slightly worse, so it does not get to
+    cost every user something for nothing."""
+    c = _collector(tmp_path)
+    assert c.sampler.memory_stat is False
+    c.store.close()
+
+
+def test_memory_stat_can_be_enabled(tmp_path):
+    from stormbreaker.caps import Caps
+    from stormbreaker.collect import Collector
+
+    caps = Caps()
+    caps.has_memory_stat = True
+    c = Collector(str(tmp_path / "m.db"), caps=caps, memory_stat=True)
+    assert c.sampler.memory_stat is True
+    c.store.close()
+
+
+def test_memory_stat_stays_off_when_unsupported(tmp_path):
+    """Asking for it on a kernel without memory.stat must not half-enable it."""
+    from stormbreaker.caps import Caps
+    from stormbreaker.collect import Collector
+
+    caps = Caps()
+    caps.has_memory_stat = False
+    c = Collector(str(tmp_path / "m2.db"), caps=caps, memory_stat=True)
+    assert c.sampler.memory_stat is False
+    c.store.close()
