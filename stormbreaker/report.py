@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import nnls
 
-from .model import Dataset, Fit, attribute, predict
+from .model import Dataset, Fit, attribute, inseparable_groups, predict
 from .sources import _read_int
 from .store import Store
 
@@ -128,6 +128,8 @@ class Row:
     cpu_cores: float
     gpu: float
     io_mb: float
+    group: str = ""
+    """Tag shared with applications this one cannot be separated from."""
 
 
 def build_rows(
@@ -198,6 +200,14 @@ def build_rows(
             )
         )
 
+    groups = inseparable_groups(ds)
+    tag_of: dict[str, str] = {}
+    for i, g in enumerate(groups):
+        for lab in g:
+            tag_of[lab] = chr(ord("a") + i) if i < 26 else "*"
+    for r in rows:
+        r.group = tag_of.get(r.label, "")
+
     rows.sort(key=lambda r: -r.watts)
     total = sum(r.watts for r in rows) + f.baseline
     for r in rows:
@@ -241,16 +251,29 @@ def render_top(rows: list[Row], ctx: dict, f: Fit, sysmod: SystemModel, n: int) 
         f"  {'WATTS':>7}  {'SHARE':>6}  {'CPU':>6}  {'GPU':>6}  "
         f"{'IO MB/s':>8}  {'':12}  APPLICATION"
     )
-    for r in rows[:n]:
+    shown = rows[:n]
+    for r in shown:
+        mark = f" [{r.group}]" if r.group else ""
         out.append(
             f"  {r.watts:7.3f}  {r.share*100:5.1f}%  {r.cpu_cores:6.3f}  "
-            f"{r.gpu:6.3f}  {r.io_mb:8.2f}  {_bar(r.share)}  {r.label}"
+            f"{r.gpu:6.3f}  {r.io_mb:8.2f}  {_bar(r.share)}  {r.label}{mark}"
         )
     out.append(
         f"  {f.baseline:7.3f}  {f.baseline/ctx['total']*100 if ctx['total'] else 0:5.1f}%"
         f"  {'':6}  {'':6}  {'':8}  {_bar(f.baseline/ctx['total'] if ctx['total'] else 0)}"
         f"  [idle baseline — attributable to nobody]"
     )
+    tags = sorted({r.group for r in shown if r.group})
+    if tags:
+        out.append("")
+        for t in tags:
+            members = [r.label for r in rows if r.group == t]
+            combined = sum(r.watts for r in rows if r.group == t)
+            out.append(
+                f"  [{t}] {' + '.join(members)} — {combined:.3f} W combined. These "
+                "run together,\n      so their total is sound but the split "
+                "between them is arbitrary."
+            )
     return "\n".join(out)
 
 
