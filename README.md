@@ -136,6 +136,43 @@ GPU time are differenced per-pid and per-client respectively, because a process
 exiting makes an aggregate total *fall* and a process starting makes it *jump* —
 both of which corrupt a naive delta.
 
+## Memory traffic: a negative result
+
+Memory bandwidth is the largest power consumer not modelled here, so it was the
+obvious next feature. It is worth recording what happened, because the outcome
+was to *not* ship it.
+
+**True bandwidth is out of reach unprivileged.** This CPU advertises hardware
+memory-bandwidth monitoring (`cqm_mbm_total`, `rdt_a`) and exposes `amd_umc`
+uncore PMUs, but reading either needs root — resctrl must be mounted, and
+`perf_event_paranoid=2` blocks the uncore counters. The best per-cgroup signal
+available without privileges is `memory.stat`'s page-fault count.
+
+**Page faults are a proxy for allocation churn, not bandwidth**, and the
+difference is measurable. Two workloads of equal CPU time:
+
+| workload | core-seconds | page faults |
+|---|---|---|
+| churn (allocate 64 MB, touch, free, repeat) | 125.9 | **7,026 k** |
+| stream (allocate 256 MB once, rewrite forever) | 129.8 | **110 k** |
+
+A 64x difference in faults for the same work and similar real bandwidth. The
+feature sees allocation, and is blind to the streaming case.
+
+**And it did not help.** Adding the column to the model, on a recording built
+from exactly those workloads:
+
+| | held-out R^2 | MAE |
+|---|---|---|
+| with page faults | +0.0898 | 3.541 W |
+| without | **+0.0961** | **3.460 W** |
+
+Slightly *worse*, for **+54% scan cost**. So it is off by default and available
+as `collect --memory` for anyone who wants to re-test it against better data.
+The plausible story — "memory traffic costs power, page faults track memory
+traffic" — is true in its first half and too weak in its second to survive
+measurement.
+
 ## Not implemented
 
 - **Per-cgroup network packets.** Needs an eBPF program; there is no procfs
@@ -143,6 +180,8 @@ both of which corrupt a naive delta.
 - **CPU frequency residency by bucket.** `cpufreq` `stats/time_in_state` is not
   exported by `amd-pstate`, so frequency is sampled per window rather than
   integrated over residency. Coarser, but available.
+- **Memory bandwidth.** Hardware support exists but needs root; the
+  unprivileged proxy was measured and rejected (above).
 
 ## What it costs to run
 
