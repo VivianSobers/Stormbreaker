@@ -2,6 +2,34 @@
 
 Per-process battery attribution for Linux, learned per machine.
 
+Tells you what is actually draining your battery, in watts rather than CPU
+percent:
+
+```
+    WATTS   SHARE     CPU     GPU   IO MB/s                APPLICATION
+    3.415   36.2%   1.040   0.043      0.72  ####........  org.chromium.Chromium
+    1.303   13.8%   0.112   0.000      0.00  ##..........  plasma-kwin_wayland
+    0.588    6.2%   0.242   0.167      0.13  #...........  google-chrome
+    0.370    3.9%   0.098   0.002      0.09  ............  code
+    0.308    3.3%   0.127   0.000      0.00  ............  tab(186946)
+    3.036   32.2%                            ####........  [idle baseline — attributable to nobody]
+```
+
+Note what ranking by watts does that ranking by CPU cannot: `google-chrome` uses
+less than a quarter of a core, yet outranks `code` on power, because its GPU
+time costs more than the other's arithmetic. A CPU-percent view would order
+these differently and be wrong about the battery.
+
+And the corresponding battery report:
+
+```
+  Top offenders:
+    1. org.chromium.Chromium         1.18 W    18.4 min of battery consumed
+       close it to gain ~7 min of runtime
+```
+
+## Does it work?
+
 ![Predicted vs measured discharge](docs/discharge.png)
 
 The model was fitted on the first part of an unplugged session, then asked to
@@ -10,28 +38,13 @@ tracks two separate load transitions — the elbow at ~2.5 min and the sharp dro
 at ~8.5 min — and lands within **4.2%** on final energy.
 
 Tracking *changes* in drain rate is the claim that matters. Two straight lines
-agreeing proves nothing, and an early run of this plot on an idle machine
-produced exactly that — see the honesty note below.
+agreeing proves nothing, and an early version of this plot on an idle machine
+produced exactly that.
 
-Tells you what is actually draining your battery, in watts rather than CPU
-percent:
-
-```
-    WATTS   SHARE     CPU     GPU   IO MB/s                APPLICATION
-    6.142   25.2%   1.288   0.000      0.00  ###.........  sb-beta
-    5.493   22.5%   0.169   0.013      0.00  ###.........  code
-    5.432   22.3%   1.459   0.000      0.00  ###.........  sb-alpha
-    1.001    4.1%   0.247   0.000      0.35  ............  org.chromium.Chromium
-    0.304    1.2%   0.015   0.000      0.17  ............  other
-    5.832   23.9%                            ###.........  [idle baseline — attributable to nobody]
-```
-
-(`sb-alpha` and `sb-beta` are synthetic loads pinned in their own cgroups, used
-to check that a workload of known size is recovered at the right rank.)
-
-Note what ranking by watts does that ranking by CPU cannot: `code` is third by
-CPU at 0.169 busy cores, yet second by power, because its GPU and context-switch
-activity cost more than its arithmetic does.
+That validates the **total**. The split between individual applications is a
+separate and weaker claim, measured at 10-25% error — see
+[How wrong is the per-application split?](#how-wrong-is-the-per-application-split)
+before quoting any single application's watts.
 
 ## Why this needs a model at all
 
