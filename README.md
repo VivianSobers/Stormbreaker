@@ -131,6 +131,32 @@ both of which corrupt a naive delta.
   exported by `amd-pstate`, so frequency is sampled per window rather than
   integrated over residency. Coarser, but available.
 
+## What it costs to run
+
+A battery-attribution tool that quietly drains the battery is self-defeating, so
+the collector's own cost is measured rather than assumed. At a 5 s window on the
+machine above:
+
+| | |
+|---|---|
+| CPU | **0.72% of one core** (0.43 s per minute) |
+| wakeups | **2.4 per second** |
+| power | **25-40 mW**, depending on what a core costs at the time |
+| storage | a few MB per week |
+
+That is under 1% of a 4.3 W idle draw. The wakeup rate matters more than the CPU
+time on a modern laptop — frequent timers keep the package out of its deepest
+idle states — so `--subsample` is exposed to trade sampling fidelity for fewer
+wakeups.
+
+Note how that number was arrived at, because the obvious method does not work.
+Differencing package power with the collector on and off gave **+418 +/- 552 mW**
+over four interleaved cycles: the standard error exceeded the effect, because a
+desktop with a browser open drifts by hundreds of milliwatts on its own. The
+figure above instead comes from reading the collector's own CPU time and pricing
+it with the model's own watts-per-core — the tool measuring itself, which is
+both more precise and a fair test of whether it works.
+
 ## Install
 
 ```sh
