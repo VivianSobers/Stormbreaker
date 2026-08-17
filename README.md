@@ -378,6 +378,41 @@ attribution: they co-vary. Applications that start and stop independently are
 attributed well; applications welded together are not, and no amount of
 collection changes that.
 
+### So the tool says when it cannot tell
+
+Rather than printing a confident split it cannot support, `top` detects
+co-varying applications and tags them:
+
+```
+    1.115   18.3%   0.046   0.015      0.00  ##....  plasma-xdg-desktop-portal-kde [a]
+    0.148    2.4%   0.052   0.000      0.00  ......  plasma-kwin_wayland [a]
+
+  [a] plasma-xdg-desktop-portal-kde + plasma-kwin_wayland — 1.263 W combined.
+      These run together, so their total is sound but the split between them
+      is arbitrary.
+```
+
+That pairing is real: the KDE portal does screen capture *through* the
+compositor, so the two are never busy apart. It also explains an oddity visible
+before grouping existed — the portal being credited 1.115 W while using 0.046 of
+a core. It was absorbing the compositor's power, and the honest statement is the
+combined figure.
+
+### How the error decomposes
+
+Synthetic data with known per-application costs (`stormbreaker/bench.py`) lets
+the error be split by cause, which real hardware confounds:
+
+| | independent apps | co-varying apps | constant daemon |
+|---|---|---|---|
+| more data (100 -> 3200 windows) | 2.8% -> 4.1% | 41% -> 62% | never works |
+| cleaner sensor (1.2 -> 0.05 W noise) | 5.3% -> **0.5%** | 30.5% -> **30.4%** | never works |
+
+Independent applications are **noise-limited**: a better sensor takes them to
+0.5%. Co-varying applications are **structure-limited** — their error does not
+move at all with sensor quality, which is the signature of an identifiability
+bound rather than a measurement one. Collecting for longer helps neither.
+
 ## What the model cannot separate
 
 Attribution is identifiable only where activity *varies*. A service that runs
