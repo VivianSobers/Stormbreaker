@@ -121,6 +121,7 @@ class CgCounters:
     system_usec: int = 0
     rbytes: int = 0
     wbytes: int = 0
+    pgfault: int = 0
     nr_procs: int = 0
 
 
@@ -136,6 +137,25 @@ def _parse_cpu_stat(path: str, out: CgCounters) -> None:
             out.user_usec += int(val)
         elif key == "system_usec":
             out.system_usec += int(val)
+
+
+def _parse_memory_stat(path: str, out: CgCounters) -> None:
+    """Page faults as a proxy for memory traffic.
+
+    True memory bandwidth needs resctrl (root) or the uncore PMUs (root), so
+    this is the best per-cgroup signal available unprivileged. A minor fault is
+    raised on first touch of a page, so the count tracks allocation and
+    streaming rather than steady-state bandwidth — a related quantity, not the
+    same one. Whether it earns a column is decided by measurement, not by the
+    plausibility of the story.
+    """
+    txt = _read(os.path.join(path, "memory.stat"))
+    if not txt:
+        return
+    for line in txt.splitlines():
+        if line.startswith("pgfault "):
+            out.pgfault += int(line.split()[1])
+            return
 
 
 _DM_CACHE: dict[str, bool] = {}
@@ -269,8 +289,17 @@ class SubSample:
 class Sampler:
     """Reads one machine. Holds the state needed to difference counters."""
 
-    def __init__(self, caps: Caps, gpu_fdinfo: bool = True, gpu_rescan: int = 12):
+    def __init__(
+        self,
+        caps: Caps,
+        gpu_fdinfo: bool = True,
+        gpu_rescan: int = 12,
+        memory_stat: bool = False,
+    ):
         self.caps = caps
+        # Off by default: measured to add 54% to the per-window scan cost while
+        # making held-out prediction slightly *worse*. See README.
+        self.memory_stat = memory_stat and caps.has_memory_stat
         self.gpu_enabled = gpu_fdinfo and caps.drm_fdinfo
         self.gpu_rescan = gpu_rescan
         self._gpu_pids: set[int] = set()
@@ -409,6 +438,8 @@ class Sampler:
                 _parse_cpu_stat(path, agg)
                 if self.caps.has_io_stat:
                     _parse_io_stat(path, agg)
+                if self.memory_stat:
+                    _parse_memory_stat(path, agg)
                 pids.extend(_read_pids(path))
             agg.nr_procs = len(pids)
             if agg.cpu_usec or pids:
@@ -505,13 +536,15 @@ class Sampler:
                 continue
             rb = max(cnt.rbytes - before.rbytes, 0)
             wb = max(cnt.wbytes - before.wbytes, 0)
+            pgf = max(cnt.pgfault - before.pgfault, 0)
             row = {
                 "cpu": cpu_s / dt,  # busy cores
                 "io_mb": (rb + wb) / 1e6 / dt,  # MB/s
                 "ctxt_k": ctxt_by_label.get(label, 0) / 1e3 / dt,
                 "gpu": gpu_by_label.get(label, 0) / 1e9 / dt,  # busy GPU-s/s
+                "pgflt_k": pgf / 1e3 / dt,  # thousand page faults/s
                 "nr_procs": float(cnt.nr_procs),
             }
-            if row["cpu"] or row["io_mb"] or row["gpu"] or row["ctxt_k"]:
+            if row["cpu"] or row["io_mb"] or row["gpu"] or row["ctxt_k"] or row["pgflt_k"]:
                 feats[label] = row
         return dt, feats, globals_

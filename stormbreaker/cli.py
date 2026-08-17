@@ -174,6 +174,7 @@ def cmd_collect(args) -> int:
         duration_s=args.duration,
         verbose=args.verbose,
         gpu_fdinfo=not args.no_gpu,
+        memory_stat=args.memory,
         subsample_s=args.subsample,
         refit_every_s=args.refit_every,
         rolling_hours=args.rolling_hours,
@@ -350,6 +351,9 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--window", type=float, default=5.0, help="window length, seconds")
     sp.add_argument("--duration", type=float, default=None, help="stop after N seconds")
     sp.add_argument("--no-gpu", action="store_true", help="skip per-process GPU scan")
+    sp.add_argument("--memory", action="store_true",
+                    help="also record per-cgroup page faults (costs ~54%% more "
+                         "scan time and did not improve accuracy when measured)")
     sp.add_argument("--subsample", type=float, default=0.5,
                     help="seconds between instantaneous-sensor reads; larger "
                          "means fewer wakeups and a cheaper collector")

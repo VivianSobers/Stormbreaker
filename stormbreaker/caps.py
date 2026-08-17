@@ -65,6 +65,11 @@ class Caps:
     cgroup_v2: bool = False
     has_cpu_stat: bool = False
     has_io_stat: bool = False
+    has_memory_stat: bool = False
+    mbm_capable: bool = False
+    """CPU supports hardware memory-bandwidth monitoring, but reading it needs
+    resctrl mounted, which needs root. Recorded so the capability report can
+    say the signal exists but is out of reach."""
     cpufreq_policies: list[str] = field(default_factory=list)
     has_avg_freq: bool = False
     has_time_in_state: bool = False
@@ -120,6 +125,10 @@ class Caps:
         lines.append(f"  cgroup v2:       {self.cgroup_root or 'unavailable'}")
         lines.append(f"  cpu.stat:        {self.has_cpu_stat}")
         lines.append(f"  io.stat:         {self.has_io_stat}")
+        mem = "pgfault (memory.stat)" if self.has_memory_stat else "unavailable"
+        if self.mbm_capable:
+            mem += "; hardware MBM present but needs root (resctrl)"
+        lines.append(f"  memory traffic:  {mem}")
         freq = "time_in_state" if self.has_time_in_state else (
             "cpuinfo_avg_freq" if self.has_avg_freq else "none")
         lines.append(f"  cpu frequency:   {freq} ({len(self.cpufreq_policies)} policies)")
@@ -288,6 +297,9 @@ def probe() -> Caps:
         c.cgroup_v2 = True
         c.has_cpu_stat = os.path.exists("/sys/fs/cgroup/cpu.stat")
         c.has_io_stat = os.path.exists("/sys/fs/cgroup/io.stat")
+        c.has_memory_stat = os.path.exists("/sys/fs/cgroup/user.slice/memory.stat")
+    flags = _read_text("/proc/cpuinfo") or ""
+    c.mbm_capable = "cqm_mbm_total" in flags
 
     c.cpufreq_policies = sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*"))
     if c.cpufreq_policies:

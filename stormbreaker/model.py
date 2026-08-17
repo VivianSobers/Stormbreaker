@@ -41,7 +41,7 @@ from .store import Store
 
 # Per-cgroup features other than CPU. CPU is handled separately because it is
 # split across frequency buckets.
-FLAT_FEATURES = ("io_mb", "gpu", "ctxt_k")
+FLAT_FEATURES = ("io_mb", "gpu", "ctxt_k", "pgflt_k")
 
 # Below these activity levels a feature carries no identifiable information:
 # the column is essentially zero, and any coefficient fitted to it is noise
@@ -51,6 +51,7 @@ ACTIVITY_FLOOR = {
     "io_mb": 0.05,  # MB/s
     "gpu": 0.002,  # busy GPU-seconds/s
     "ctxt_k": 0.05,  # thousand context switches/s
+    "pgflt_k": 0.05,  # thousand page faults/s
 }
 
 

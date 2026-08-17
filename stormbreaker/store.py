@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS sample (
     io_mb    REAL,
     ctxt_k   REAL,
     gpu      REAL,
+    pgflt_k  REAL,
     nr_procs REAL,
     PRIMARY KEY (win_id, label_id)
 ) WITHOUT ROWID;
@@ -128,12 +129,13 @@ class Store:
                 f["io_mb"],
                 f["ctxt_k"],
                 f["gpu"],
+                f.get("pgflt_k", 0.0),
                 f["nr_procs"],
             )
             for label, f in feats.items()
         ]
         self.db.executemany(
-            "INSERT OR REPLACE INTO sample VALUES (?,?,?,?,?,?,?)", rows
+            "INSERT OR REPLACE INTO sample VALUES (?,?,?,?,?,?,?,?)", rows
         )
         return wid
 
@@ -182,7 +184,8 @@ class Store:
             part = win_ids[i : i + chunk]
             q = ",".join("?" * len(part))
             rows = self.db.execute(
-                f"""SELECT s.win_id, l.name, s.cpu, s.io_mb, s.ctxt_k, s.gpu, s.nr_procs
+                f"""SELECT s.win_id, l.name, s.cpu, s.io_mb, s.ctxt_k, s.gpu,
+                           s.pgflt_k, s.nr_procs
                     FROM sample s JOIN label l ON l.id = s.label_id
                     WHERE s.win_id IN ({q})""",
                 part,
@@ -193,6 +196,7 @@ class Store:
                     "io_mb": r["io_mb"],
                     "ctxt_k": r["ctxt_k"],
                     "gpu": r["gpu"],
+                    "pgflt_k": r["pgflt_k"] or 0.0,
                     "nr_procs": r["nr_procs"],
                 }
         return out

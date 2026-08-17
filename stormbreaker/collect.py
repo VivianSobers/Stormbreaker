@@ -29,12 +29,15 @@ class Collector:
         window_s: float = 5.0,
         subsample_s: float = 0.5,
         gpu_fdinfo: bool = True,
+        memory_stat: bool = False,
         caps: Caps | None = None,
         refit_every_s: float = 600.0,
         rolling_hours: float = 4.0,
     ):
         self.caps = caps or probe()
-        self.sampler = Sampler(self.caps, gpu_fdinfo=gpu_fdinfo)
+        self.sampler = Sampler(
+            self.caps, gpu_fdinfo=gpu_fdinfo, memory_stat=memory_stat
+        )
         self.store = Store(db_path)
         self.window_s = window_s
         self.subsample_s = min(subsample_s, window_s / 2)
@@ -161,6 +164,7 @@ def run_collect(
     duration_s: float | None,
     verbose: bool,
     gpu_fdinfo: bool = True,
+    memory_stat: bool = False,
     subsample_s: float = 0.5,
     refit_every_s: float = 600.0,
     rolling_hours: float = 4.0,
@@ -178,6 +182,7 @@ def run_collect(
         db_path,
         window_s=window_s,
         gpu_fdinfo=gpu_fdinfo,
+        memory_stat=memory_stat,
         subsample_s=subsample_s,
         caps=caps,
         refit_every_s=refit_every_s,
