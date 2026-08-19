@@ -183,6 +183,40 @@ measurement.
 - **Memory bandwidth.** Hardware support exists but needs root; the
   unprivileged proxy was measured and rejected (above).
 
+## Reruns are cheap; collection is not
+
+Measuring on real hardware costs minutes of wall time and a burst of CPU.
+Re-*analysing* something already measured costs milliseconds. The tools are
+split along that line, because the expensive half rarely needs repeating.
+
+| task | before | now |
+|---|---|---|
+| re-score a self-test run | 289 s (re-collect) | **0.5 s** (`selftest --reuse`) |
+| decide whether a feature earns its place | ~250 s bespoke experiment | **3 s** (`ablate`) |
+| a fresh self-test, when you do need one | 289 s | 206 s |
+
+```sh
+stormbreaker selftest            # collect + score; kept at ~/.local/share/stormbreaker/selftest.db
+stormbreaker selftest --reuse    # re-score that run, no workload, no battery
+stormbreaker ablate              # score every feature by removing it, on stored data
+```
+
+Three things make this work:
+
+**Runs are kept, not thrown away.** Self-test data lands next to the main
+database rather than in a temporary directory, so yesterday's measurement is
+still there to re-examine.
+
+**Old databases are migrated, not stranded.** `CREATE TABLE IF NOT EXISTS` does
+nothing to a table that already exists, so every added column used to leave
+earlier recordings unreadable by newer code — which quietly means collecting
+them again. Missing columns are now added on open.
+
+**Short runs report `INCONCLUSIVE`, not `FAIL`.** The same machine scored 24%
+symmetry error on a full run and 60% on a quarter-length one. The second number
+is sampling noise; presenting it as a failure sends you debugging a problem that
+is not there.
+
 ## What it costs to run
 
 A battery-attribution tool that quietly drains the battery is self-defeating, so
