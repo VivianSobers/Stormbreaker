@@ -22,7 +22,13 @@ from .model import (
     unknown_labels,
 )
 from .report import load_and_report, render_daily, render_top
-from .selftest import render as render_selftest, run_selftest
+from .selftest import (
+    DEFAULT_SELFTEST_DB,
+    ablate,
+    render as render_selftest,
+    render_ablation,
+    run_selftest,
+)
 from .store import DEFAULT_DB, Store
 from .validate import (
     discharge_readiness,
@@ -315,10 +321,27 @@ def cmd_validate(args) -> int:
     return 0
 
 
+def cmd_ablate(args) -> int:
+    """Score every feature by removing it — no new collection needed."""
+    store = Store(args.db)
+    if store.window_count() == 0:
+        print(f"No data in {args.db}.", file=sys.stderr)
+        return 2
+    store.close()
+    base, rows = ablate(args.db, minutes=args.minutes, holdout=args.holdout)
+    print(render_ablation(base, rows))
+    print()
+    return 0
+
+
 def cmd_selftest(args) -> int:
     """Check the per-application split against workloads we control."""
+    db = args.selftest_db or DEFAULT_SELFTEST_DB
+    if args.reuse:
+        print(f"re-analysing stored run at {db} (no workload)", file=sys.stderr)
     try:
-        res = run_selftest(args.db, scale=args.scale, window_s=args.window)
+        res = run_selftest(db, scale=args.scale, window_s=args.window,
+                           reuse=args.reuse)
     except RuntimeError as e:
         print(f"selftest unavailable: {e}", file=sys.stderr)
         return 2
@@ -424,7 +447,19 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--scale", type=float, default=1.0,
                     help="shorten (<1) or lengthen (>1) every phase")
     sp.add_argument("--window", type=float, default=2.0, help="window length")
+    sp.add_argument("--reuse", action="store_true",
+                    help="re-analyse the last stored run instead of collecting "
+                         "again (milliseconds instead of minutes)")
+    sp.add_argument("--selftest-db", default=None, dest="selftest_db",
+                    help=f"where runs are kept (default {DEFAULT_SELFTEST_DB})")
     sp.set_defaults(func=cmd_selftest)
+
+    sp = sub.add_parser(
+        "ablate", help="score each feature by removing it, on stored data"
+    )
+    sp.add_argument("--minutes", type=float, default=None)
+    sp.add_argument("--holdout", type=float, default=0.35)
+    sp.set_defaults(func=cmd_ablate)
 
     sp = sub.add_parser("prune", help="drop old windows")
     sp.add_argument("--keep-days", type=float, default=30.0)

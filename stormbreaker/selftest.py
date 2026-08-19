@@ -26,6 +26,7 @@ the cgroup boundaries are unambiguous.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -35,11 +36,19 @@ import numpy as np
 
 from .caps import probe
 from .collect import Collector
-from .model import Dataset, Fit, attribute, fit, load_dataset
-from .store import Store
+from .model import Dataset, Fit, attribute, feature_kind, fit, load_dataset
+from .store import DEFAULT_DB, Store
 
 UNIT_A = "sb-selftest-a"
 UNIT_B = "sb-selftest-b"
+
+DEFAULT_SELFTEST_DB = os.path.join(
+    os.path.dirname(DEFAULT_DB), "selftest.db"
+)
+"""Runs are kept next to the main database rather than in a temporary
+directory. A run costs minutes of wall time and a burst of CPU; throwing the
+data away means paying that again for every re-analysis, and re-analysis is
+milliseconds."""
 
 
 @dataclass
@@ -60,14 +69,18 @@ def default_schedule(scale: float = 1.0) -> list[Phase]:
     """Idle gaps between phases let the package settle, so a phase is not
     contaminated by the thermal and frequency tail of the one before it."""
     s = lambda x: max(x * scale, 5.0)  # noqa: E731
+    # Settling gaps are the cheapest thing to shorten: they exist only to keep
+    # one phase's thermal tail out of the next, which takes a few seconds, not
+    # twenty. Trimming them cut a default run from 289s to 189s without
+    # touching the phases that carry signal.
     return [
-        Phase("settle", None, 0, s(20)),
-        Phase("A x2", UNIT_A, 2, s(40)),
-        Phase("idle", None, 0, s(20)),
-        Phase("B x2", UNIT_B, 2, s(40)),
-        Phase("idle", None, 0, s(20)),
-        Phase("A x4", UNIT_A, 4, s(40)),
-        Phase("idle", None, 0, s(20)),
+        Phase("settle", None, 0, s(10)),
+        Phase("A x2", UNIT_A, 2, s(35)),
+        Phase("idle", None, 0, s(8)),
+        Phase("B x2", UNIT_B, 2, s(35)),
+        Phase("idle", None, 0, s(8)),
+        Phase("A x4", UNIT_A, 4, s(35)),
+        Phase("idle", None, 0, s(8)),
         # The two units run together but on *different duty cycles*, and this
         # is the crux of the whole test.
         #
@@ -81,9 +94,9 @@ def default_schedule(scale: float = 1.0) -> list[Phase]:
         # Measured: identical steady loads scored 0.0% symmetry error (forced by
         # ridge symmetry), proportional steady loads scored 50%, and only
         # independently duty-cycled loads test anything real.
-        Phase("A/B duty", "both", 3, s(60), threads_b=3,
+        Phase("A/B duty", "both", 3, s(50), threads_b=3,
               duty_a=(4.0, 3.0), duty_b=(7.0, 5.0)),
-        Phase("idle", None, 0, s(20)),
+        Phase("idle", None, 0, s(8)),
     ]
 
 
@@ -321,13 +334,97 @@ def render(res: SelfTestResult) -> str:
     return "\n".join(out)
 
 
+def ablate(db_path: str, minutes: float | None = None, holdout: float = 0.35):
+    """Score each feature by removing it, on data already collected.
+
+    Feature decisions used to cost a fresh recording each. They do not need
+    one: zeroing a feature's columns in a stored dataset and re-scoring answers
+    "does this earn its place" in milliseconds. A feature that does not improve
+    held-out error is costing collection time for nothing.
+
+    Returns (baseline_result, [(feature, r2, mae, delta_mae), ...]).
+    """
+    import time as _time
+
+    from .validate import _subset, validate_holdout
+
+    store = Store(db_path)
+    try:
+        since = None if minutes is None else _time.time() - minutes * 60.0
+        ds = load_dataset(store, since=since)
+    finally:
+        store.close()
+
+    base = validate_holdout(ds, holdout=holdout)
+    kinds = sorted({feature_kind(feat) for _lab, feat in ds.columns})
+
+    rows = []
+    for kind in kinds:
+        idx = [j for j, (_l, f) in enumerate(ds.columns) if feature_kind(f) == kind]
+        if not idx:
+            continue
+        cut = _subset(ds, np.arange(len(ds.y)))
+        cut.X = cut.X.copy()
+        cut.X[:, idx] = 0.0
+        try:
+            r = validate_holdout(cut, holdout=holdout)
+        except ValueError:
+            continue
+        rows.append((kind, r.r2, r.mae, r.mae - base.mae))
+    # Largest positive delta = removing it hurt most = most valuable feature.
+    rows.sort(key=lambda t: -t[3])
+    return base, rows
+
+
+def render_ablation(base, rows) -> str:
+    out = ["", "  Feature ablation (on already-collected data)", "  " + "=" * 56]
+    out.append(
+        f"  all features: held-out R^2={base.r2:+.4f}  MAE={base.mae:.3f} W  "
+        f"({base.n_train} train / {base.n_test} test)"
+    )
+    out.append("")
+    out.append(f"  {'REMOVED':<10} {'R^2':>9} {'MAE':>8} {'MAE change':>11}  verdict")
+    for kind, r2, mae, d in rows:
+        verdict = (
+            "carries signal" if d > 0.02
+            else "no measurable value" if d > -0.02
+            else "HURTS - consider dropping"
+        )
+        out.append(f"  {kind:<10} {r2:+9.4f} {mae:8.3f} {d:+11.3f}  {verdict}")
+    out.append("")
+    out.append(
+        "  MAE change is what happens when the feature is REMOVED, so positive\n"
+        "  means it was helping. Anything near zero is paying collection cost\n"
+        "  for nothing."
+    )
+    return "\n".join(out)
+
+
+def analyse_db(db_path: str) -> SelfTestResult:
+    """Score a previously collected run. Milliseconds, no workload, no battery.
+
+    Every question that does not need *new* measurements should come through
+    here rather than through a fresh collection.
+    """
+    store = Store(db_path)
+    try:
+        ds = load_dataset(store, top_n=12, n_buckets=1)
+        f = fit(ds)
+        return analyse(ds, f)
+    finally:
+        store.close()
+
+
 def run_selftest(
     db_path: str,
     scale: float = 1.0,
     window_s: float = 2.0,
     verbose: bool = True,
+    reuse: bool = False,
 ) -> SelfTestResult:
     """Drive known workloads, collect, fit, and check the split."""
+    if reuse:
+        return analyse_db(db_path)
     if not have_systemd_run():
         raise RuntimeError(
             "systemd-run is required to place workloads in their own cgroups"
@@ -356,10 +453,5 @@ def run_selftest(
         collector.stop()
         t.join(timeout=30)
     collector.store.commit()
-
-    store = Store(db_path)
-    ds = load_dataset(store, top_n=12, n_buckets=1)
-    f = fit(ds)
-    res = analyse(ds, f)
-    store.close()
-    return res
+    collector.store.close()
+    return analyse_db(db_path)
