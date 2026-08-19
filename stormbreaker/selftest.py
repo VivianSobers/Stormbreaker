@@ -154,13 +154,30 @@ class SelfTestResult:
     n_windows: int = 0
     notes: list[str] = field(default_factory=list)
 
+    MIN_SHARED_WINDOWS = 12
+    """Below this the simultaneous comparison is dominated by sampling noise.
+    Measured: the same machine scored 24% symmetry error on a full-length run
+    and 60% on a quarter-length one — the second number says nothing about the
+    model, only that the run was too short."""
+
+    @property
+    def underpowered(self) -> bool:
+        return bool(
+            self.simultaneous and self.simultaneous[2] < self.MIN_SHARED_WINDOWS
+        )
+
     @property
     def passed(self) -> bool:
         """Judged on the simultaneous comparison, which is the only one with no
-        confound. The solo comparison is reported but not gated on."""
+        confound. The solo comparison is reported but not gated on.
+
+        An underpowered run is never a pass *or* a meaningful fail; the caller
+        should treat it as inconclusive.
+        """
         return (
             self.symmetry_error == self.symmetry_error
             and self.symmetry_error < 0.15
+            and not self.underpowered
         )
 
 
@@ -300,7 +317,10 @@ def render(res: SelfTestResult) -> str:
     out.append("")
     if res.simultaneous:
         va, vb, ov = res.simultaneous
-        verdict = "PASS" if res.passed else "FAIL"
+        if res.underpowered:
+            verdict = "INCONCLUSIVE"
+        else:
+            verdict = "PASS" if res.passed else "FAIL"
         out.append(
             f"  symmetry, simultaneous  A={va:.3f}  B={vb:.3f} W/core over {ov} "
             f"shared windows"
@@ -329,6 +349,13 @@ def render(res: SelfTestResult) -> str:
         "  is attribution error alone. Run apart, the machine genuinely differed\n"
         "  between phases, so that figure is the weaker of the two."
     )
+    if res.underpowered:
+        out.append("")
+        out.append(
+            f"  Only {res.simultaneous[2]} shared windows — too few to judge. "
+            "Re-run without\n  --scale, or with a larger one, before reading "
+            "anything into this number."
+        )
     for n in res.notes:
         out.append(f"  note: {n}")
     return "\n".join(out)

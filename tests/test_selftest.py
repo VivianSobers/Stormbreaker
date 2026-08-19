@@ -92,3 +92,21 @@ def test_scale_shortens_every_phase():
     short = default_schedule(0.5)
     full = default_schedule(1.0)
     assert sum(p.seconds for p in short) < sum(p.seconds for p in full)
+
+
+def test_short_runs_are_inconclusive_not_failures():
+    """A quarter-length run scored 60% symmetry error where a full one scored
+    24%. That is sampling noise, not a model regression, and reporting it as a
+    FAIL sends someone debugging a problem that is not there."""
+    from stormbreaker.selftest import SelfTestResult
+
+    thin = SelfTestResult(symmetry_error=0.6, simultaneous=(1.0, 2.5, 4))
+    assert thin.underpowered
+    assert not thin.passed
+
+    solid_bad = SelfTestResult(symmetry_error=0.6, simultaneous=(1.0, 2.5, 40))
+    assert not solid_bad.underpowered
+    assert not solid_bad.passed
+
+    solid_good = SelfTestResult(symmetry_error=0.05, simultaneous=(1.0, 1.05, 40))
+    assert solid_good.passed
