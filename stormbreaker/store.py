@@ -54,6 +54,21 @@ CREATE TABLE IF NOT EXISTS sample (
 ) WITHOUT ROWID;
 """
 
+# Columns added after the first release. SQLite's CREATE TABLE IF NOT EXISTS
+# does nothing to a table that already exists, so a schema change silently
+# leaves old databases unreadable by new code — and a recording costs hours of
+# wall time to reproduce. Every added column is listed here and applied on open.
+MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "window": [
+        ("volt_v", "REAL"),
+        ("temp_c", "REAL"),
+        ("profile", "TEXT"),
+    ],
+    "sample": [
+        ("pgflt_k", "REAL"),
+    ],
+}
+
 DEFAULT_DB = os.path.join(
     os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
     "stormbreaker",
@@ -75,10 +90,30 @@ class Store:
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
+        self._migrate()
         self.db.commit()
         self._labels: dict[str, int] = {
             r["name"]: r["id"] for r in self.db.execute("SELECT id, name FROM label")
         }
+
+    def _migrate(self) -> None:
+        """Add any columns an older database is missing.
+
+        Cheap (SQLite rewrites only the header), idempotent, and it means a
+        recording made by any earlier version stays readable rather than
+        having to be collected again.
+        """
+        for table, cols in MIGRATIONS.items():
+            have = {
+                r[1] for r in self.db.execute(f"PRAGMA table_info({table})")
+            }
+            if not have:
+                continue
+            for name, decl in cols:
+                if name not in have:
+                    self.db.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {decl}"
+                    )
 
     # -- writing --------------------------------------------------------------
 
