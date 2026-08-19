@@ -108,3 +108,60 @@ def test_application_missing_from_fresh_data_scores_zero():
     assert np.all(aligned.X[:, b_col] == 0.0)
     a_col = f.columns.index(("a", "cpu"))
     np.testing.assert_allclose(aligned.X[:, a_col], fresh.X[:, 0])
+
+
+def test_old_database_is_migrated_not_broken(tmp_path):
+    """A schema change must never strand an existing recording.
+
+    CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+    adding a column silently left old databases unreadable by new code — and a
+    recording costs hours of wall time to reproduce.
+    """
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE label (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+        CREATE TABLE window (
+            id INTEGER PRIMARY KEY, ts REAL NOT NULL, dt REAL NOT NULL,
+            soc_w REAL, rapl_pkg_w REAL, rapl_core_w REAL, gpu_busy REAL,
+            freq_ghz REAL, batt_w REAL, discharging INTEGER, charge REAL
+        );
+        CREATE TABLE sample (
+            win_id INTEGER NOT NULL, label_id INTEGER NOT NULL,
+            cpu REAL, io_mb REAL, ctxt_k REAL, gpu REAL, nr_procs REAL,
+            PRIMARY KEY (win_id, label_id)
+        ) WITHOUT ROWID;
+        """
+    )
+    old.execute("INSERT INTO window(id, ts, dt, soc_w) VALUES (1, 100.0, 5.0, 7.5)")
+    old.execute("INSERT INTO label(id, name) VALUES (1, 'firefox')")
+    old.execute("INSERT INTO sample VALUES (1, 1, 0.5, 0.0, 0.0, 0.0, 3)")
+    old.commit()
+    old.close()
+
+    store = Store(path)
+    window_cols = {r[1] for r in store.db.execute("PRAGMA table_info(window)")}
+    sample_cols = {r[1] for r in store.db.execute("PRAGMA table_info(sample)")}
+
+    assert {"volt_v", "temp_c", "profile"} <= window_cols
+    assert "pgflt_k" in sample_cols
+
+    # and the pre-existing row survived untouched
+    assert store.window_count() == 1
+    row = store.db.execute("SELECT soc_w FROM window WHERE id=1").fetchone()
+    assert row["soc_w"] == pytest.approx(7.5)
+    samples = store.samples_for([1])
+    assert samples[1]["firefox"]["cpu"] == pytest.approx(0.5)
+    store.close()
+
+
+def test_migration_is_idempotent(tmp_path):
+    path = str(tmp_path / "twice.db")
+    Store(path).close()
+    s = Store(path)          # opening again must not fail on duplicate columns
+    assert s.window_count() == 0
+    s.close()
