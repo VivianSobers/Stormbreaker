@@ -6,7 +6,6 @@ comparison it cannot actually make.
 """
 
 import numpy as np
-import pytest
 
 from stormbreaker.model import Dataset, fit
 from stormbreaker.selftest import UNIT_A, UNIT_B, analyse, default_schedule

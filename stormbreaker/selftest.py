@@ -252,8 +252,8 @@ def analyse(ds: Dataset, f: Fit) -> SelfTestResult:
         res.watts[label] = float(attr[label].sum()) / len(ds.y)
         res.watts_per_core[label] = float(attr[label].sum()) / cores
 
-    a_labels = [l for l in res.watts_per_core if _unit_side(l) == "A"]
-    b_labels = [l for l in res.watts_per_core if _unit_side(l) == "B"]
+    a_labels = [lab for lab in res.watts_per_core if _unit_side(lab) == "A"]
+    b_labels = [lab for lab in res.watts_per_core if _unit_side(lab) == "B"]
 
     # Strict test: the pair whose active windows overlap the most.
     best, best_overlap = None, 0
@@ -268,8 +268,8 @@ def analyse(ds: Dataset, f: Fit) -> SelfTestResult:
         res.simultaneous = (va, vb, best_overlap)
 
     # Weaker test: solo phases with the most similar amount of work done.
-    solo_a = [l for l in a_labels if best is None or l != best[0]]
-    solo_b = [l for l in b_labels if best is None or l != best[1]]
+    solo_a = [lab for lab in a_labels if best is None or lab != best[0]]
+    solo_b = [lab for lab in b_labels if best is None or lab != best[1]]
     pair, diff = None, float("inf")
     for la in solo_a:
         for lb in solo_b:
@@ -288,7 +288,7 @@ def analyse(ds: Dataset, f: Fit) -> SelfTestResult:
         )
 
     # Linearity: the same unit at two different core counts.
-    by_cores = sorted(((res.cores[l], l) for l in a_labels))
+    by_cores = sorted(((res.cores[lab], lab) for lab in a_labels))
     if len(by_cores) >= 2:
         (c_lo, l_lo), (c_hi, l_hi) = by_cores[0], by_cores[-1]
         if c_hi > c_lo * 1.5:

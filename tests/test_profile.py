@@ -7,7 +7,6 @@ appearing to fit both — which is worse than refusing, because it looks fine.
 """
 
 import numpy as np
-import pytest
 
 from stormbreaker.model import (
     Dataset,

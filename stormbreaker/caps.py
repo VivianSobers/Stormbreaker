@@ -138,7 +138,7 @@ class Caps:
             + (f" ({self.temp_label})" if self.temp_label else "")
         )
         lines.append(
-            f"  power profile:   "
+            "  power profile:   "
             + (", ".join(os.path.basename(p) for p in self.profile_paths)
                if self.profile_paths else "unavailable")
         )
