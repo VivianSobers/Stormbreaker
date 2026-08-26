@@ -15,6 +15,7 @@ from .model import (
     dominant_profile,
     filter_to_profile,
     fit,
+    inseparable_groups,
     load_dataset,
     load_fit,
     profile_mix,
@@ -30,6 +31,7 @@ from .selftest import (
     run_selftest,
 )
 from .store import DEFAULT_DB, Store
+from .uncertainty import bootstrap_watts, render_intervals
 from .validate import (
     discharge_readiness,
     plot_discharge,
@@ -350,6 +352,23 @@ def cmd_selftest(args) -> int:
     return 0 if res.passed else 1
 
 
+def cmd_uncertainty(args) -> int:
+    """Put a range on each application's watts, on data already collected."""
+    store, ds = _load(args)
+    ds, f = _fit_for(args, store, ds)
+    bs = bootstrap_watts(
+        ds, f,
+        n_resamples=args.resamples,
+        ci=args.ci,
+        seed=args.seed,
+        groups=inseparable_groups(ds),
+    )
+    print()
+    print(render_intervals(bs, n=args.number))
+    print()
+    return 0
+
+
 def cmd_prune(args) -> int:
     store = Store(args.db)
     n = store.prune(args.keep_days)
@@ -460,6 +479,19 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--minutes", type=float, default=None)
     sp.add_argument("--holdout", type=float, default=0.35)
     sp.set_defaults(func=cmd_ablate)
+
+    sp = sub.add_parser(
+        "uncertainty", help="confidence range on each application's watts"
+    )
+    add_model_args(sp)
+    add_saved_arg(sp)
+    sp.add_argument("-n", "--number", type=int, default=15)
+    sp.add_argument("--resamples", type=int, default=60,
+                    help="bootstrap resamples; more is tighter but slower")
+    sp.add_argument("--ci", type=float, default=0.90,
+                    help="interval coverage, 0-1")
+    sp.add_argument("--seed", type=int, default=0)
+    sp.set_defaults(func=cmd_uncertainty)
 
     sp = sub.add_parser("prune", help="drop old windows")
     sp.add_argument("--keep-days", type=float, default=30.0)
