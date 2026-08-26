@@ -471,6 +471,49 @@ before grouping existed — the portal being credited 1.115 W while using 0.046 
 a core. It was absorbing the compositor's power, and the honest statement is the
 combined figure.
 
+### And it says how far it can tell, per row
+
+`selftest` gives one number for the whole model. `stormbreaker uncertainty`
+gives one per application, by moving-block bootstrap — refit on 60 resamples of
+the recording, scored against the activity actually observed:
+
+```
+    WATTS      LOW     HIGH     +/-      APPLICATION
+    1.181    0.827    1.530     59%      org.chromium.Chromium
+    1.115    0.709    1.469     68%  [?] plasma-xdg-desktop-portal-kde
+    1.107    0.893    1.480     53%      google-chrome
+    0.148    0.000    0.183    123%  [?] plasma-kwin_wayland  <- not distinguishable from zero
+    0.005    0.000    0.018    359%      com.google.Chrome  <- not distinguishable from zero
+
+  [?] ... Trust their total instead:
+          1.263  [0.760 - 1.583]  plasma-kwin_wayland + plasma-xdg-desktop-portal-kde
+```
+
+Blocks rather than individual windows, because consecutive windows are heavily
+autocorrelated — a video keeps playing, a compile keeps compiling. Resampling
+windows one at a time would treat 2600 correlated observations as 2600
+independent ones and report intervals several times too narrow.
+
+It costs **3.5 s** on a 2600-window recording and needs no battery, no
+workload, and no new collection.
+
+**Two things the interval cannot see**, both measured rather than assumed:
+
+- **Bias.** On synthetic data with a known answer, the point estimate sat 5.8%
+  above truth while the interval spanned 2.5% — missing the true value
+  entirely. A bootstrap resamples the estimator, so it reports the spread of a
+  biased thing and stays silent about the bias. Absolute accuracy comes from
+  `selftest`, not from here.
+- **Unidentifiability**, and this failure is silent. Given a *perfectly*
+  proportional pair, ridge breaks the tie the same way in every resample, so
+  the bootstrap returned a **0.7% interval around a split that was 9% wrong**,
+  while their combined total was good to 4%.
+
+So a narrow interval is necessary but not sufficient. That second result is why
+grouped rows are tagged `[?]` here and reported as a total: for those, the
+range printed beside each one is measuring how much the split *moved*, which is
+not the same as how arbitrary it *is*.
+
 ### How the error decomposes
 
 Synthetic data with known per-application costs (`stormbreaker/bench.py`) lets
