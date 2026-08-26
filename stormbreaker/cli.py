@@ -9,6 +9,7 @@ import time
 from . import __version__
 from .caps import probe
 from .collect import run_collect
+from .compare import compare, render_comparison
 from .model import (
     align_to_fit,
     coefficient_table,
@@ -19,6 +20,7 @@ from .model import (
     load_dataset,
     load_fit,
     profile_mix,
+    reduce_to_budget,
     save_fit,
     unknown_labels,
 )
@@ -113,7 +115,9 @@ def _apply_profile(ds, args):
         "Use --profile all to override.",
         file=sys.stderr,
     )
-    return filter_to_profile(ds, chosen)
+    # Filtering drops windows but not columns, and the column budget was
+    # sized for the windows that are now gone.
+    return reduce_to_budget(filter_to_profile(ds, chosen))
 
 
 def _fit_for(args, store, ds):
@@ -369,6 +373,29 @@ def cmd_uncertainty(args) -> int:
     return 0
 
 
+def cmd_compare(args) -> int:
+    """Attribute the change in power between two periods, on stored data."""
+    store, ds = _load(args)
+    ds = _apply_profile(ds, args)
+    try:
+        c = compare(
+            ds,
+            recent_min=args.recent,
+            baseline_min=args.baseline,
+            ending_min=args.ending,
+            n_resamples=args.resamples,
+            ci=args.ci,
+            seed=args.seed,
+        )
+    except ValueError as e:
+        print(f"\ncannot compare: {e}\n", file=sys.stderr)
+        return 2
+    print()
+    print(render_comparison(c, n=args.number))
+    print()
+    return 0
+
+
 def cmd_prune(args) -> int:
     store = Store(args.db)
     n = store.prune(args.keep_days)
@@ -492,6 +519,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="interval coverage, 0-1")
     sp.add_argument("--seed", type=int, default=0)
     sp.set_defaults(func=cmd_uncertainty)
+
+    sp = sub.add_parser(
+        "compare", help="attribute the change in power between two periods"
+    )
+    add_model_args(sp)
+    sp.add_argument("-n", "--number", type=int, default=10)
+    sp.add_argument("--recent", type=float, default=60.0,
+                    help="length of the later period, minutes")
+    sp.add_argument("--baseline", type=float, default=None,
+                    help="length of the earlier period (default: same as "
+                         "--recent)")
+    sp.add_argument("--ending", type=float, default=0.0,
+                    help="end the recent period N minutes before the newest "
+                         "window, to look at a past stretch")
+    sp.add_argument("--resamples", type=int, default=60)
+    sp.add_argument("--ci", type=float, default=0.90)
+    sp.add_argument("--seed", type=int, default=0)
+    sp.set_defaults(func=cmd_compare)
 
     sp = sub.add_parser("prune", help="drop old windows")
     sp.add_argument("--keep-days", type=float, default=30.0)

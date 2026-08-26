@@ -271,6 +271,54 @@ def choose_budget(
     return top_n, n_buckets
 
 
+def reduce_to_budget(ds: Dataset, top_n: int | None = None) -> Dataset:
+    """Re-size a dataset's columns to the windows it actually contains.
+
+    The column budget is chosen when a dataset is loaded, from the number of
+    windows loaded. Anything that *narrows* a dataset afterwards — filtering to
+    one power profile, slicing out a period to compare — leaves that budget
+    sized for data that is no longer there, and fitting 651 columns against
+    1064 windows produces exactly the overfitting this budget exists to
+    prevent. Surplus labels are merged into ``other``, which is where the
+    already-below-budget ones go too.
+
+    Frequency buckets are left alone. Re-bucketing would move every CPU column
+    at once, and a comparison between two subsets is only meaningful if the
+    columns still mean the same thing in both.
+    """
+    labels = {lab for lab, _ in ds.columns} - {"other"}
+    feat_order: list[str] = []
+    seen_lab = ds.columns[0][0] if ds.columns else None
+    for lab, feat in ds.columns:
+        if lab == seen_lab:
+            feat_order.append(feat)
+    n_buckets = sum(1 for f in feat_order if f.startswith("cpu"))
+
+    want, _ = choose_budget(ds.X.shape[0], top_n, n_buckets)
+    if len(labels) <= want:
+        return ds
+
+    score: dict[str, float] = {}
+    for j, (lab, feat) in enumerate(ds.columns):
+        if lab == "other" or not (feat.startswith("cpu") or feat == "gpu"):
+            continue
+        score[lab] = score.get(lab, 0.0) + float(ds.X[:, j].sum())
+    keep = set(sorted(score, key=lambda lab: -score[lab])[:want])
+
+    new_labels = sorted(keep | {"other"})
+    columns = [(lab, feat) for lab in new_labels for feat in feat_order]
+    index = {c: i for i, c in enumerate(columns)}
+
+    X = np.zeros((ds.X.shape[0], len(columns)), float)
+    for j, (lab, feat) in enumerate(ds.columns):
+        X[:, index[(lab if lab in keep else "other", feat)]] += ds.X[:, j]
+
+    out = ds.select(np.arange(ds.X.shape[0]))
+    out.X = X
+    out.columns = columns
+    return out
+
+
 def load_dataset(
     store: Store,
     since: float | None = None,
