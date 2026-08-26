@@ -124,6 +124,26 @@ class Dataset:
     one regime do not describe another, so this is carried alongside rather
     than folded into the numeric globals."""
 
+    def select(self, idx: np.ndarray) -> "Dataset":
+        """A dataset of the windows at ``idx`` — a boolean mask or an index
+        array, so this serves filtering and resampling alike.
+
+        Column identity is deliberately preserved: a subset of windows is the
+        same set of applications observed for less time, and renumbering the
+        columns would make coefficients from the two incomparable.
+        """
+        return Dataset(
+            X=self.X[idx],
+            y=self.y[idx],
+            columns=self.columns,
+            ts=self.ts[idx],
+            freq_edges=self.freq_edges,
+            target=self.target,
+            win_ids=[self.win_ids[i] for i in np.arange(len(self.win_ids))[idx]],
+            globals_={k: v[idx] for k, v in self.globals_.items()},
+            profiles=None if self.profiles is None else self.profiles[idx],
+        )
+
 
 def _bucket_edges(freq: np.ndarray, n_buckets: int) -> list[float]:
     """Frequency bucket edges from the observed distribution.
@@ -225,17 +245,7 @@ def filter_to_profile(ds: Dataset, profile: str) -> Dataset:
     if ds.profiles is None:
         return ds
     keep = np.array([p == profile for p in ds.profiles])
-    return Dataset(
-        X=ds.X[keep],
-        y=ds.y[keep],
-        columns=ds.columns,
-        ts=ds.ts[keep],
-        freq_edges=ds.freq_edges,
-        target=ds.target,
-        win_ids=[w for w, k in zip(ds.win_ids, keep) if k],
-        globals_={k: v[keep] for k, v in ds.globals_.items()},
-        profiles=ds.profiles[keep],
-    )
+    return ds.select(keep)
 
 
 def choose_budget(

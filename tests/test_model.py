@@ -342,3 +342,65 @@ def test_too_little_data_is_an_error_not_a_guess():
     ds, _t, _b = make_dataset(n=10)
     with pytest.raises(ValueError, match="usable windows"):
         fit(ds)
+
+
+def test_select_carries_the_power_regime_along():
+    """A subset of windows must keep its regime labels. Coefficients fitted
+    under one regime do not describe another, so losing the labels during a
+    slice would let a later filter silently mix two machines' worth of
+    behaviour."""
+    n = 20
+    ds = Dataset(
+        X=np.arange(n, dtype=float).reshape(-1, 1),
+        y=np.arange(n, dtype=float),
+        columns=[("a", "cpu0")],
+        ts=np.arange(n, dtype=float),
+        freq_edges=[],
+        target="soc_w",
+        win_ids=list(range(100, 100 + n)),
+        globals_={"dt": np.full(n, 5.0)},
+        profiles=np.array(["balanced"] * 10 + ["performance"] * 10),
+    )
+    sub = ds.select(np.arange(12, 20))
+
+    assert list(sub.profiles) == ["performance"] * 8
+    assert sub.win_ids == list(range(112, 120))
+    assert sub.columns == ds.columns
+
+
+def test_select_accepts_a_boolean_mask():
+    n = 10
+    ds = Dataset(
+        X=np.arange(n, dtype=float).reshape(-1, 1),
+        y=np.arange(n, dtype=float),
+        columns=[("a", "cpu0")],
+        ts=np.arange(n, dtype=float),
+        freq_edges=[],
+        target="soc_w",
+        win_ids=list(range(n)),
+        globals_={"dt": np.full(n, 5.0)},
+    )
+    mask = np.zeros(n, dtype=bool)
+    mask[[2, 5]] = True
+    sub = ds.select(mask)
+
+    assert sub.win_ids == [2, 5]
+    assert sub.profiles is None
+
+
+def test_select_may_repeat_a_window():
+    """Resampling with replacement asks for the same window more than once."""
+    n = 5
+    ds = Dataset(
+        X=np.arange(n, dtype=float).reshape(-1, 1),
+        y=np.arange(n, dtype=float),
+        columns=[("a", "cpu0")],
+        ts=np.arange(n, dtype=float),
+        freq_edges=[],
+        target="soc_w",
+        win_ids=list(range(n)),
+        globals_={"dt": np.full(n, 5.0)},
+    )
+    sub = ds.select(np.array([1, 1, 1, 3]))
+    assert sub.win_ids == [1, 1, 1, 3]
+    assert sub.X.shape == (4, 1)

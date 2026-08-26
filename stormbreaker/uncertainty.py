@@ -107,19 +107,6 @@ def _resample_index(n: int, block: int, rng: np.random.Generator) -> np.ndarray:
     return idx[:n]
 
 
-def _slice(ds: Dataset, idx: np.ndarray) -> Dataset:
-    return Dataset(
-        X=ds.X[idx],
-        y=ds.y[idx],
-        columns=ds.columns,
-        ts=ds.ts[idx],
-        freq_edges=ds.freq_edges,
-        target=ds.target,
-        win_ids=[ds.win_ids[i] for i in idx],
-        globals_={k: v[idx] for k, v in ds.globals_.items()},
-    )
-
-
 def _watts_by_label(
     X: np.ndarray, coef: np.ndarray, columns: list[tuple[str, str]]
 ) -> dict[str, float]:
@@ -221,7 +208,7 @@ def bootstrap_watts(
     for _ in range(n_resamples):
         idx = _resample_index(n, blk, rng)
         try:
-            fb = fit(_slice(ds, idx), lam=f.lam)
+            fb = fit(ds.select(idx), lam=f.lam)
         except ValueError:
             # Too few usable windows in this resample; a skipped draw is
             # better than a fabricated one.
