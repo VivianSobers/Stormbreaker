@@ -193,12 +193,14 @@ split along that line, because the expensive half rarely needs repeating.
 |---|---|---|
 | re-score a self-test run | 289 s (re-collect) | **0.5 s** (`selftest --reuse`) |
 | decide whether a feature earns its place | ~250 s bespoke experiment | **3 s** (`ablate`) |
+| put a range on an application's watts | not possible | **3.5 s** (`uncertainty`) |
 | a fresh self-test, when you do need one | 289 s | 206 s |
 
 ```sh
 stormbreaker selftest            # collect + score; kept at ~/.local/share/stormbreaker/selftest.db
 stormbreaker selftest --reuse    # re-score that run, no workload, no battery
 stormbreaker ablate              # score every feature by removing it, on stored data
+stormbreaker uncertainty         # bootstrap a range per application, on stored data
 ```
 
 Three things make this work:
@@ -258,6 +260,7 @@ stormbreaker collect --window 5 -v       # sample into ~/.local/share/stormbreak
 stormbreaker top                         # rank applications by watts
 stormbreaker report                      # battery report in minutes of life
 stormbreaker coefs                       # inspect the learned coefficients
+stormbreaker uncertainty                 # confidence range on each application
 stormbreaker validate --plot out.png     # check the model against reality
 stormbreaker selftest                    # measure per-app attribution error
 ```
