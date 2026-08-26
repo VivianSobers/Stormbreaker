@@ -11,6 +11,7 @@ quality so nobody has to take it on faith.
 from __future__ import annotations
 
 import os
+import textwrap
 from dataclasses import dataclass
 
 import numpy as np
@@ -304,7 +305,8 @@ def render_daily(
         )
     out.append("")
     out.append("  Top offenders:")
-    for i, r in enumerate(rows[:n], 1):
+    shown = rows[:n]
+    for i, r in enumerate(shown, 1):
         out.append(
             f"    {i}. {r.label:<28} {r.watts:5.2f} W   "
             f"{r.minutes_lost:5.1f} min of battery consumed"
@@ -313,6 +315,25 @@ def render_daily(
             out.append(
                 f"       close it to gain ~{r.minutes_gained:.0f} min of runtime"
             )
+    # A daily report is the one place this tool gives advice, so a row whose
+    # watts might belong to its partner cannot be left to stand alone: closing
+    # one half of an unseparable pair does not recover the pair's total, and
+    # may recover almost none of it.
+    for tag in sorted({r.group for r in shown if r.group}):
+        members = [r.label for r in rows if r.group == tag]
+        combined = sum(r.watts for r in rows if r.group == tag)
+        out.append("")
+        out.append(
+            textwrap.fill(
+                f"Careful: {' + '.join(members)} are never busy apart. Their "
+                f"{combined:.2f} W total is sound but the split above is "
+                "arbitrary, so closing one may move its draw onto the other "
+                "rather than saving it.",
+                width=76,
+                initial_indent="    ",
+                subsequent_indent="    ",
+            )
+        )
     out.append("")
     out.append(
         f"  Idle baseline {f.baseline:.2f} W is not attributable to any "

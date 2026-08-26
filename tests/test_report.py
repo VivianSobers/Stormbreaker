@@ -93,3 +93,83 @@ def test_system_model_never_goes_negative():
     f = fit_system_model(_ds(pkg, batt, np.full(n, 45.0)))
     assert f.slope >= 0.0
     assert f.intercept >= 0.0
+
+
+def _row(label, watts, group=""):
+    from stormbreaker.report import Row
+
+    return Row(
+        label=label,
+        watts=watts,
+        share=watts / 10.0,
+        energy_wh=watts,
+        minutes_lost=watts * 10,
+        minutes_gained=watts * 5,
+        cpu_cores=0.1,
+        gpu=0.0,
+        io_mb=0.0,
+        group=group,
+    )
+
+
+def _fit_stub():
+    from stormbreaker.model import Fit
+
+    return Fit(
+        columns=[("a", "cpu0")],
+        coef=np.array([1.0]),
+        baseline=2.0,
+        freq_edges=[],
+        target="soc_w",
+        lam=0.1,
+        r2=0.9,
+        mae=0.3,
+        rmse=0.4,
+        n_windows=200,
+    )
+
+
+def _sysmod():
+    return SystemModel(intercept=6.0, slope=0.7, r2=0.93, n=500)
+
+
+def _ctx():
+    return {
+        "hours": 3.0,
+        "pkg_mean": 8.0,
+        "sys_mean": 12.0,
+        "baseline": 2.0,
+        "total": 10.0,
+        "capacity_wh": 40.0,
+    }
+
+
+def test_daily_report_warns_before_advising_on_a_grouped_app():
+    """The report is the one place this tool gives advice, and "close it to
+    gain 7 minutes" is wrong for half of an unseparable pair: the draw may
+    simply move onto the partner."""
+    from stormbreaker.report import render_daily
+
+    rows = [_row("portal", 1.1, "a"), _row("kwin", 0.2, "a"), _row("editor", 0.4)]
+    text = render_daily(rows, _ctx(), _fit_stub(), _sysmod(), n=2)
+
+    assert "Careful" in text
+    assert "portal + kwin" in text
+    assert "1.30 W total" in text  # the figure that is actually sound
+
+
+def test_daily_report_stays_quiet_when_nothing_is_grouped():
+    from stormbreaker.report import render_daily
+
+    rows = [_row("editor", 1.1), _row("browser", 0.4)]
+    text = render_daily(rows, _ctx(), _fit_stub(), _sysmod(), n=2)
+    assert "Careful" not in text
+
+
+def test_a_grouped_app_below_the_cut_raises_no_warning():
+    """Only rows the reader can actually see are worth a caveat."""
+    from stormbreaker.report import render_daily
+
+    rows = [_row("editor", 2.0), _row("portal", 1.1, "a"), _row("kwin", 0.2, "a")]
+    text = render_daily(rows, _ctx(), _fit_stub(), _sysmod(), n=1)
+    assert "Careful" not in text
