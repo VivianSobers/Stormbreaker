@@ -194,6 +194,7 @@ split along that line, because the expensive half rarely needs repeating.
 | re-score a self-test run | 289 s (re-collect) | **0.5 s** (`selftest --reuse`) |
 | decide whether a feature earns its place | ~250 s bespoke experiment | **3 s** (`ablate`) |
 | put a range on an application's watts | not possible | **3.5 s** (`uncertainty`) |
+| find what changed since earlier | not possible | **2.3 s** (`compare`) |
 | a fresh self-test, when you do need one | 289 s | 206 s |
 
 ```sh
@@ -201,6 +202,7 @@ stormbreaker selftest            # collect + score; kept at ~/.local/share/storm
 stormbreaker selftest --reuse    # re-score that run, no workload, no battery
 stormbreaker ablate              # score every feature by removing it, on stored data
 stormbreaker uncertainty         # bootstrap a range per application, on stored data
+stormbreaker compare             # attribute a change in draw, on stored data
 ```
 
 Three things make this work:
@@ -261,6 +263,7 @@ stormbreaker top                         # rank applications by watts
 stormbreaker report                      # battery report in minutes of life
 stormbreaker coefs                       # inspect the learned coefficients
 stormbreaker uncertainty                 # confidence range on each application
+stormbreaker compare                     # what changed between two periods
 stormbreaker validate --plot out.png     # check the model against reality
 stormbreaker selftest                    # measure per-app attribution error
 ```
@@ -376,6 +379,91 @@ load. Two synthetic loads pinned in their own cgroups at 2 and 6 cores were
 recovered as the top two consumers.
 
 Five minutes is a small sample and one machine is one machine.
+
+## What changed since earlier?
+
+"My battery is worse than it was this morning" is a different question from
+"what is using power now", and `stormbreaker compare` answers it on stored
+data:
+
+```
+  earlier:   37.9 min  (452 windows)    4.12 W
+  recent:    38.1 min  (444 windows)   10.36 W
+
+  package power changed by +6.23 W
+
+   BEFORE    AFTER    CHANGE              RANGE  APPLICATION
+    1.192    4.478    +3.285    [+2.923, +3.534]  org.chromium.Chromium (up)
+    0.507    1.175    +0.668    [+0.524, +0.918]  google-chrome (up)
+    0.197    0.756    +0.559    [+0.177, +0.878]  plasma-kwin_wayland (up)
+
+  attributed: +4.95 W    unexplained: +1.28 W
+
+  28 other application(s) moved by less than the 90% interval on their
+  own change, which is not evidence that anything happened.
+```
+
+A difference of two independently fitted models is not a difference. Two fits
+have different column sets, different chosen ridge strengths, and different
+shrinkage because they saw different amounts of data; subtracting them reports
+changes that are artefacts of having fitted twice. So one model is fitted
+across both periods and used as a single price list, and each period's activity
+is scored against it.
+
+That means what comes out is the change in *work done*, priced consistently.
+The other kind of change — the same work costing more — deliberately lands on
+no application at all. It appears as `unexplained`, the gap between the
+measured change and the sum of the attributed ones. Blaming an application for
+a change in the cost of its work would be wrong.
+
+Each change carries the bootstrap interval on **the change itself**, so rows
+that moved by less than the model's own uncertainty are counted and not listed.
+Above, 28 of 33 applications fell in that category.
+
+### The first real run of this was nonsense, and that fixed the design
+
+It reported package power **up 1.26 W** while the busy-core count had gone
+**down** from 1.73 to 0.42, and attributed a change of −2.16 W against a
+measured +1.26 W — the wrong sign. The two periods straddled a plug-in. The
+machine had been charging for the second one, which warms the package and lifts
+clocks entirely on its own.
+
+Mains state is the coarsest regime boundary there is, and it now refuses
+outright, as a profile change already did:
+
+```
+cannot compare: the earlier period was on battery (100% of windows) and the
+recent one on mains (91% of windows). Charging warms the package and lifts
+clocks on its own, so this comparison would be measuring the charger rather
+than the applications.
+```
+
+`--ending N` moves the pair back in time, which is how you examine a past
+stretch — or step a comparison off a plug-in that sits between the two halves.
+
+### When the applications do not explain the change, it says so first
+
+A ranked list of applications reads like an answer whether or not the model can
+account for what happened. So if the attributed changes come to less than half
+the measured change, or move against it, the ranking is prefaced rather than
+presented:
+
+```
+  ! The applications account for 12% of that change, so most of it came from
+    something they did not do — a device, the panel, heat, or a counter this
+    tool does not read. Treat the ranking below as a partial account, not the
+    answer.
+```
+
+### A budget bug this found
+
+The column budget is chosen when a dataset is loaded, sized to the number of
+windows loaded. Anything that narrows a dataset afterwards kept that budget:
+comparing two 45-minute periods fitted **651 columns against 1064 windows**,
+and filtering to one power profile did the same. That is precisely the
+overfitting regime the budget exists to prevent — the same one that once turned
+a held-out R² of +0.807 into −0.209. Slicing now re-sizes the columns to the
+windows that remain.
 
 ## Power profiles are separate machines
 
